@@ -226,6 +226,25 @@ function parseMidi(buffer){
 }
 
 function simplifyRightHand(source){
+ // Mecano - Un Año Más (KAR): la pista llamada "Mecano" contiene la línea
+ // principal, pero también algunos acordes. No mezclarla con los arreglos
+ // de las demás pistas: escoger una sola nota por cada ataque simultáneo.
+ const mecanoTrack=source.find(n=>/Mecano/i.test(n.trackName||''));
+ if(mecanoTrack){
+  const lead=source.filter(n=>n.track===mecanoTrack.track).slice().sort((a,b)=>a.start-b.start||b.midi-a.midi);
+  const groups=[];
+  for(const n of lead){
+   let g=groups[groups.length-1];
+   if(!g||n.start-g.firstStart>0.08){g={firstStart:n.start,items:[]};groups.push(g)}
+   g.items.push(n);
+  }
+  const melody=groups.map(g=>g.items.reduce((best,n)=>n.midi>best.midi?n:best,g.items[0])).sort((a,b)=>a.start-b.start);
+  for(let i=0;i<melody.length-1;i++){
+   const next=melody[i+1];
+   if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
+  }
+  return melody.filter(n=>n.end>n.start);
+ }
  // Bella Ciao: la melodía está repartida entre dos pistas consecutivas.
  // Pista 1 (Acoustic Gtr) contiene el primer tramo y pista 2 (Elec. Piano)
  // continúa la melodía. Las pistas 5 y 7 son duplicados una octava arriba;
