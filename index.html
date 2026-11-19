@@ -229,6 +229,25 @@ function parseMidi(buffer){
 }
 
 function simplifyRightHand(source){
+ // Bella Ciao - Manu Pilas (MIDI de piano en una sola pista).
+ // La voz principal está en el registro agudo; se separa del acompañamiento grave.
+ const manuPilas=source.length>=1250&&source.length<=1350&&source.some(n=>/Grand Piano/i.test(n.trackName||''));
+ if(manuPilas){
+  const lead=source.filter(n=>n.midi>=64).slice().sort((a,b)=>a.start-b.start||b.midi-a.midi);
+  const groups=[];
+  for(const n of lead){
+   let g=groups[groups.length-1];
+   if(!g||n.start-g.firstStart>0.10){g={firstStart:n.start,items:[]};groups.push(g)}
+   g.items.push(n);
+  }
+  const melody=groups.map(g=>g.items.reduce((best,n)=>n.midi>best.midi?n:best,g.items[0])).sort((a,b)=>a.start-b.start);
+  for(let i=0;i<melody.length-1;i++){
+   const next=melody[i+1];
+   if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
+  }
+  return melody.filter(n=>n.end>n.start).map(n=>({...n,hand:'right'}));
+ }
+
  // Mana - Rayando el Sol (KAR): la melodía principal aparece en el canal MIDI 3.
  // El canal 7 contiene una segunda capa/duplicación; se evita mezclarla con la melodía.
  const rayandoChannel=source.filter(n=>n.channel===2);
