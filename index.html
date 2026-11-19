@@ -48,12 +48,14 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
  <div class="controls">
   <div><label>Subir canción MIDI o CSV</label><label class="file-label">Elegir archivo<input id="songFile" type="file" accept=".mid,.midi,.csv,audio/midi,text/csv"></label></div>
   <div class="control"><label for="librarySelect">Mi biblioteca</label><select id="librarySelect"><option value="">Cargando biblioteca...</option></select></div>
-  <button id="libraryLoad" type="button" disabled> Cargar canción </button><button id="libraryDelete" type="button" disabled> Borrar de biblioteca </button>
+  <button id="libraryLoad" type="button" disabled> Cargar canción </button><button id="libraryDelete" type="button" disabled> Borrar de biblioteca </button><button id="analyzeMidi" type="button" disabled>Analizar MIDI</button>
   <div class="control"><label for="hand">Qué mano practicar</label><select id="hand"><option value="both">Las dos manos</option><option value="right">Solo mano derecha</option><option value="left">Solo mano izquierda</option></select></div>
   <label class="audio-toggle" style="padding:10px 0"><input id="melodyOnly" type="checkbox" checked> Solo melodía sencilla (mano derecha)</label>
   <div class="control" style="min-width:190px"><label for="speed">Velocidad: <strong id="speedValue">100 %</strong></label><input id="speed" type="range" min="0" max="100" step="1" value="100" style="width:190px;accent-color:#62a7ff"></div>
   <button class="primary" id="play" disabled>▶ Reproducir</button><button id="pause" disabled>Ⅱ Pausar</button><button id="restart" disabled>↺ Volver al inicio</button>
  </div>
+ <div class="controls" style="margin-top:10px"><button id="copyMidiReport" type="button" disabled>Copiar informe</button><span class="hint">Selecciona un MIDI de la biblioteca y pulsa «Analizar MIDI». No cambia la canción cargada.</span></div>
+ <textarea id="midiReport" rows="9" readonly placeholder="Aquí aparecerá el análisis de las pistas y notas del MIDI." style="width:100%;box-sizing:border-box;margin-top:8px;background:#101a2b;color:#e8f0ff;border:1px solid #40516c;border-radius:9px;padding:10px;font:12px/1.5 monospace"></textarea>
  <div class="controls" style="margin-top:14px;align-items:end">
   <div class="control"><label for="practiceStart">Desde el compás</label><select id="practiceStart" disabled><option value="0">1</option></select></div>
   <div class="control"><label for="practiceEnd">Hasta el compás</label><select id="practiceEnd" disabled><option value="0">1</option></select></div>
@@ -118,7 +120,7 @@ async function refreshLibrary(){
  sel.replaceChildren();const first=document.createElement('option');first.value='';first.textContent=data.songs.length?'Elige una canción guardada':'La biblioteca está vacía';sel.append(first);
  data.songs.forEach(song=>{const o=document.createElement('option');o.value=song.path;o.textContent=song.name;sel.append(o)});updateLibraryButtons();
 }
-function updateLibraryButtons(){const has=!!document.getElementById('librarySelect').value;document.getElementById('libraryLoad').disabled=!has;document.getElementById('libraryDelete').disabled=!has}
+function updateLibraryButtons(){const has=!!document.getElementById('librarySelect').value;document.getElementById('libraryLoad').disabled=!has;document.getElementById('libraryDelete').disabled=!has;document.getElementById('analyzeMidi').disabled=!has||!/\\.midi?$/i.test(document.getElementById('librarySelect').selectedOptions[0]?.textContent||'')}
 async function connectLibrary(){
  const pass=document.getElementById('libraryPassword').value||localStorage.getItem(PASSWORD_STORAGE_KEY)||'';if(!pass){document.getElementById('libraryHint').textContent='Escribe la contraseña para conectar.';return}
  libraryPassword=pass;
@@ -141,6 +143,38 @@ async function deleteFromLibrary(){
  await libraryRequest('',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
  await refreshLibrary();document.getElementById('status').textContent='Canción borrada de la biblioteca en la nube.';
 }
+
+function buildMidiReport(list,name){
+ const tracks=new Map();
+ for(const n of list){const key=n.track+'|'+n.trackName; if(!tracks.has(key))tracks.set(key,[]);tracks.get(key).push(n)}
+ const lines=['ANÁLISIS MIDI: '+name,'Notas totales: '+list.length,'Duración aproximada: '+formatTime(Math.max(...list.map(n=>n.end),0)),'Pistas detectadas: '+tracks.size,'','RESUMEN POR PISTA'];
+ for(const [key,arr] of tracks){
+  const [idx,label]=key.split('|'),sorted=arr.slice().sort((a,b)=>a.start-b.start);
+  const min=Math.min(...arr.map(n=>n.midi)),max=Math.max(...arr.map(n=>n.midi));
+  const counts=Array(12).fill(0);arr.forEach(n=>counts[n.midi%12]++);
+  const top=counts.map((v,i)=>({v,i})).sort((a,b)=>b.v-a.v).slice(0,5).map(x=>names[x.i]+' '+x.v).join(', ');
+  const poly=sorted.filter((n,i)=>i&&n.start<sorted[i-1].end-0.025).length;
+  lines.push('', 'Pista '+(Number(idx)+1)+' · '+(label||'Sin nombre'),'Notas: '+arr.length+' · rango MIDI: '+min+'–'+max+' · solapamientos: '+poly,'Notas más frecuentes: '+top);
+  lines.push('Primeras 35 notas (segundos / nota / MIDI / duración):');
+  lines.push(sorted.slice(0,35).map(n=>n.start.toFixed(2)+'s '+n.name+' '+n.midi+' ('+(n.end-n.start).toFixed(2)+'s)').join(' | '));
+ }
+ lines.push('','SECUENCIA GLOBAL INICIAL (primeras 80 notas por inicio)');
+ lines.push(list.slice().sort((a,b)=>a.start-b.start).slice(0,80).map(n=>n.start.toFixed(2)+'s '+n.name+n.midi+' [P'+(n.track+1)+']').join(' | '));
+ return lines.join('\\n');
+}
+async function analyzeSelectedMidi(){
+ const path=document.getElementById('librarySelect').value;if(!path)return;
+ if(!/\\.midi?$/i.test(path))throw Error('Selecciona un archivo MIDI (.mid o .midi), no un CSV.');
+ document.getElementById('analyzeMidi').disabled=true;document.getElementById('libraryHint').textContent='Analizando el MIDI de la biblioteca...';
+ try{
+  const blob=await libraryRequest('?action=download&path='+encodeURIComponent(path));
+  const parsed=parseMidi(await blob.arrayBuffer());
+  const report=buildMidiReport(parsed,path.replace(/^[0-9a-f-]{36}_/i,''));
+  document.getElementById('midiReport').value=report;document.getElementById('copyMidiReport').disabled=false;
+  document.getElementById('libraryHint').textContent='Análisis terminado. Pulsa «Copiar informe» y pégalo aquí en el chat.';
+ }finally{updateLibraryButtons()}
+}
+
 function parseMidi(buffer){
  const data=new Uint8Array(buffer);let p=0;
  const read32=()=>{const v=((data[p]*0x1000000)+(data[p+1]<<16)+(data[p+2]<<8)+data[p+3])>>>0;p+=4;return v};
@@ -187,7 +221,7 @@ function parseMidi(buffer){
  }
  const barSeconds=boundaries.map(secondsAt),songEnd=secondsAt(maxTick);
  if(barSeconds[barSeconds.length-1]<songEnd-0.001)barSeconds.push(songEnd);
- const result=rawNotes.map(n=>{const label=n.trackName.toLowerCase(),hand=/left|izq|mano izquierda/.test(label)?'left':/right|der|mano derecha/.test(label)?'right':(n.midi<60?'left':'right');return{midi:n.midi,name:names[n.midi%12],start:secondsAt(n.startTick),end:secondsAt(n.endTick),hand}}).sort((a,b)=>a.start-b.start);
+ const result=rawNotes.map(n=>{const label=n.trackName.toLowerCase(),hand=/left|izq|mano izquierda/.test(label)?'left':/right|der|mano derecha/.test(label)?'right':(n.midi<60?'left':'right');return{midi:n.midi,name:names[n.midi%12],start:secondsAt(n.startTick),end:secondsAt(n.endTick),hand,track:n.track,trackName:n.trackName||('Pista '+(n.track+1))}}).sort((a,b)=>a.start-b.start);
  result.measureTimes=barSeconds;return result;
 }
 
@@ -286,7 +320,7 @@ async function play(){if(!notes.length)return;if(Number(document.getElementById(
 function pause(){if(!playing)return;const speed=playbackSpeed;pausedAt+=(performance.now()-startedAt)/1000*speed;playing=false;cancelAnimationFrame(raf);stopAudio();document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;draw(pausedAt);screenMessage.textContent='En pausa';screenMessage.style.display='grid'}
 function restart(){playing=false;cancelAnimationFrame(raf);stopAudio();pausedAt=practiceStartTime;document.getElementById('play').disabled=!notes.length;document.getElementById('pause').disabled=true;screenMessage.textContent='Preparado desde el principio. Pulsa Reproducir.';screenMessage.style.display='grid';draw(0)}
 document.getElementById('songFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(!libraryPassword)throw Error('Primero conecta la biblioteca con la contraseña.');const isMidi=/\.midi?$/i.test(file.name);const list=isMidi?parseMidi(await file.arrayBuffer()):parseCSV(await file.text());await saveToLibrary(file);loadNotes(list,file.name);document.getElementById('status').textContent=list.length.toLocaleString('es-ES')+' notas cargadas y guardadas en la biblioteca en la nube · duración '+formatTime(Math.max(...list.map(n=>n.end)));}catch(err){screenMessage.textContent=err.message;screenMessage.style.display='grid';document.getElementById('status').textContent='No se pudo cargar el archivo.'}e.target.value='';});
-document.getElementById('librarySelect').addEventListener('change',updateLibraryButtons);document.getElementById('libraryLoad').addEventListener('click',()=>loadFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryDelete').addEventListener('click',()=>deleteFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryConnect').addEventListener('click',connectLibrary);document.getElementById('libraryPassword').addEventListener('keydown',e=>{if(e.key==='Enter')connectLibrary()});document.getElementById('rememberPassword').addEventListener('change',e=>{if(!e.target.checked)localStorage.removeItem(PASSWORD_STORAGE_KEY);else if(libraryPassword)localStorage.setItem(PASSWORD_STORAGE_KEY,libraryPassword)});document.getElementById('songFile').disabled=true;
+document.getElementById('librarySelect').addEventListener('change',updateLibraryButtons);document.getElementById('analyzeMidi').addEventListener('click',()=>analyzeSelectedMidi().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('copyMidiReport').addEventListener('click',async()=>{const box=document.getElementById('midiReport');try{await navigator.clipboard.writeText(box.value);document.getElementById('libraryHint').textContent='Informe copiado. Pégalo en el chat.'}catch(e){box.focus();box.select();document.execCommand('copy');document.getElementById('libraryHint').textContent='Informe seleccionado/copiar. Si no se copió, pulsa Ctrl+C.'}});document.getElementById('libraryLoad').addEventListener('click',()=>loadFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryDelete').addEventListener('click',()=>deleteFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryConnect').addEventListener('click',connectLibrary);document.getElementById('libraryPassword').addEventListener('keydown',e=>{if(e.key==='Enter')connectLibrary()});document.getElementById('rememberPassword').addEventListener('change',e=>{if(!e.target.checked)localStorage.removeItem(PASSWORD_STORAGE_KEY);else if(libraryPassword)localStorage.setItem(PASSWORD_STORAGE_KEY,libraryPassword)});document.getElementById('songFile').disabled=true;
 document.getElementById('play').addEventListener('click',play);document.getElementById('pause').addEventListener('click',pause);document.getElementById('restart').addEventListener('click',restart);
 document.getElementById('hand').addEventListener('change',()=>{if(playing){pausedAt+=(performance.now()-startedAt)/1000*playbackSpeed;startedAt=performance.now();stopAudio()}draw(pausedAt)});
 document.getElementById('audioEnabled').addEventListener('change',async e=>{if(!e.target.checked){stopAudio();document.getElementById('audioStatus').textContent='Audio desactivado'}else{document.getElementById('audioStatus').textContent='El sonido se cargará al pulsar Reproducir';if(playing){const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;startedAt=performance.now();stopAudio();try{await prepareAudio()}catch(err){document.getElementById('audioStatus').textContent=err.message}}}});
