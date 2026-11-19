@@ -226,14 +226,34 @@ function parseMidi(buffer){
 }
 
 function simplifyRightHand(source){
- const right=source.filter(n=>n.hand==='right').slice().sort((a,b)=>a.start-b.start||b.midi-a.midi);
+ // En MIDI multipista, primero buscamos las pistas melódicas de registro medio.
+ // Así evitamos mezclar bajos y percusiones afinadas con la melodía principal.
+ const hasTracks=source.some(n=>Number.isInteger(n.track));
+ let pool=source.filter(n=>n.hand==='right');
+ if(hasTracks){
+  const stats=new Map();
+  for(const n of source){
+   if(!Number.isInteger(n.track))continue;
+   if(!stats.has(n.track))stats.set(n.track,[]);
+   stats.get(n.track).push(n);
+  }
+  const melodicTracks=[...stats.entries()].filter(([id,arr])=>{
+   const pitches=arr.map(n=>n.midi).sort((a,b)=>a-b);
+   const min=pitches[0],max=pitches[pitches.length-1],median=pitches[Math.floor(pitches.length/2)];
+   return arr.length>=15&&min>=55&&max<=84&&median>=60&&median<=80;
+  }).map(([id])=>id);
+  if(melodicTracks.length>=2)pool=source.filter(n=>melodicTracks.includes(n.track));
+ }
+ pool=pool.slice().sort((a,b)=>a.start-b.start||a.midi-b.midi);
  const groups=[];
- for(const n of right){
+ for(const n of pool){
   let group=groups[groups.length-1];
   if(!group||n.start-group.firstStart>0.10){group={firstStart:n.start,items:[]};groups.push(group)}
   group.items.push(n);
  }
- const melody=groups.map(g=>g.items.reduce((best,n)=>n.midi>best.midi?n:best,g.items[0])).sort((a,b)=>a.start-b.start);
+ // Las pistas duplicadas suelen tocar la misma nota una octava más arriba.
+ // Elegimos la versión más grave para mantener una melodía cómoda de practicar.
+ const melody=groups.map(g=>g.items.reduce((best,n)=>n.midi<best.midi?n:best,g.items[0])).sort((a,b)=>a.start-b.start);
  for(let i=0;i<melody.length-1;i++){
   const next=melody[i+1];
   if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
