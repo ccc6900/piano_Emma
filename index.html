@@ -13,14 +13,14 @@ main{max-width:1250px;margin:auto;padding:22px clamp(14px,3vw,32px) 48px}.panel{
 label{color:var(--muted);font-size:14px;display:block;margin-bottom:7px}select,button,.file-label{font:inherit;border-radius:10px;border:1px solid var(--line);padding:10px 14px;background:#202c43;color:var(--text)}
 select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.primary,.file-label{background:#2467bd;border-color:#438de5}button:disabled{opacity:.45;cursor:not-allowed}
 .controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.control{min-width:150px}.file-label input{display:none}
-.screen{height:250px;position:relative;overflow:hidden;border-radius:13px;border:1px solid var(--line);background:repeating-linear-gradient(90deg,#111a2c 0,#111a2c 39px,#17243a 40px);margin-top:12px}
-.screen:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:#d8e6ff;box-shadow:0 0 14px #62a7ff;z-index:4}
+.screen{height:250px;position:relative;overflow:hidden;border-radius:13px 13px 0 0;border:1px solid var(--line);border-bottom:0;background:#101a2c;margin-top:12px}
+.screen:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:#d8e6ff;box-shadow:0 0 14px #62a7ff;z-index:4;pointer-events:none}
 .screen-message{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:20px;color:var(--muted);z-index:1}
 .falling-note{position:absolute;border-radius:6px 6px 3px 3px;opacity:.95;z-index:2;box-shadow:0 2px 8px #0005;border:1px solid #ffffff55;min-height:7px}
 .falling-note.right{background:linear-gradient(180deg,#83bdff,#2874cf)}.falling-note.left{background:linear-gradient(180deg,#ffacd0,#d94d8b)}
-.piano-wrap{width:100%;overflow:hidden;padding:12px 0 8px}.keyboard{height:150px;position:relative;width:100%;user-select:none}
+.piano-wrap{width:100%;overflow:hidden;padding:0 0 8px}.keyboard{height:150px;position:relative;width:100%;user-select:none}
 .key{position:absolute;top:0;border:1px solid #aab3c2;border-radius:0 0 5px 5px}.white{height:150px;background:linear-gradient(90deg,#fff,#e8edf5);z-index:1}.black{height:92px;background:linear-gradient(90deg,#111827,#303b50);z-index:2;border:1px solid #050914}
-.key .note{position:absolute;bottom:7px;left:0;right:0;text-align:center;font-size:10px;color:#364152;white-space:nowrap;overflow:hidden}.key.c-key{background:linear-gradient(90deg,#e7f2ff,#cfe3ff)}.key.black.c-key{background:linear-gradient(90deg,#15243a,#35577e)}
+.key .note{position:absolute;bottom:6px;left:0;right:0;text-align:center;font-size:clamp(6px,.72vw,10px);font-weight:700;color:#263449;white-space:nowrap;overflow:hidden;pointer-events:none}.key.black .note{color:#fff;font-size:clamp(5px,.62vw,8px);bottom:5px}.key.c-key{background:linear-gradient(90deg,#e7f2ff,#cfe3ff)}.key.black.c-key{background:linear-gradient(90deg,#15243a,#35577e)}
 .legend{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:14px;margin-top:12px}.dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:7px;vertical-align:middle}.left{background:var(--pink)}.right{background:var(--blue)}
 .hint{font-size:14px;line-height:1.55}.status{margin-top:12px;color:#c7d6ed;font-size:14px}.progress{height:7px;background:#27344c;border-radius:8px;overflow:hidden;margin-top:8px}.progress>div{height:100%;width:0;background:#62a7ff;transition:width .1s}
 @media(max-width:600px){.panel{padding:15px}.screen{height:190px}.keyboard{height:115px}.white{height:115px}.black{height:72px}.key .note{display:none}}
@@ -31,11 +31,12 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
 <main>
 <section class="panel">
  <div class="topline"><div><h2>Mi teclado</h2><div class="hint">Elige el número de teclas de tu piano.</div></div><div><label for="keyboardSize">Tipo de teclado</label><select id="keyboardSize"><option value="61">61 teclas</option><option value="88">88 teclas</option></select></div></div>
- <div class="piano-wrap"><div id="keyboard" class="keyboard" aria-label="Teclado de piano"></div></div><div class="hint" id="rangeText">61 teclas · DO2 a DO7 · todas visibles</div>
+ <div class="hint" id="rangeText">61 teclas · DO2 a DO7 · todas visibles</div>
 </section>
 <section class="panel">
- <div class="topline"><div><h2>Zona de aprendizaje</h2><div class="hint">Las notas bajan hacia el teclado. Azul: derecha · Rosa: izquierda.</div></div><div class="hint" id="songTitle">Ninguna canción cargada</div></div>
+ <div class="topline"><div><h2>Zona de aprendizaje</h2><div class="hint">Las notas caen desde arriba y llegan a la tecla que tienes que tocar. Cada tecla y cada nota llevan su nombre.</div></div><div class="hint" id="songTitle">Ninguna canción cargada</div></div>
  <div class="screen" id="screen"><div class="screen-message" id="screenMessage">Carga el archivo CSV de Viva la Vida para ver las notas en movimiento.</div></div>
+ <div class="piano-wrap"><div id="keyboard" class="keyboard" aria-label="Teclado de piano"></div></div>
  <div class="legend"><span><i class="dot right"></i>Mano derecha</span><span><i class="dot left"></i>Mano izquierda</span></div>
  <div class="status" id="status">Esperando una canción.</div><div class="progress"><div id="progressBar"></div></div>
 </section>
@@ -64,7 +65,8 @@ function renderKeyboard(count){
   const pitch=midi%12,oct=Math.floor(midi/12)-1,isBlack=blackNotes.has(pitch),key=document.createElement('div');
   key.className='key '+(isBlack?'black':'white')+(pitch===0?' c-key':'');key.dataset.midi=midi;key.setAttribute('aria-label',names[pitch]+' '+oct);
   if(isBlack){key.style.left=(wi*whiteWidth-whiteWidth*.32)+'px';key.style.width=(whiteWidth*.64)+'px'}
-  else{key.style.left=(wi*whiteWidth)+'px';key.style.width=whiteWidth+'px';if((pitch===0||midi===end-1)&&whiteWidth>17){const n=document.createElement('span');n.className='note';n.textContent=names[pitch]+' '+oct;key.append(n)}wi++}
+  else{key.style.left=(wi*whiteWidth)+'px';key.style.width=whiteWidth+'px';const n=document.createElement('span');n.className='note';n.textContent=names[pitch];key.append(n);wi++}
+  if(isBlack){const n=document.createElement('span');n.className='note';n.textContent=names[pitch];key.append(n)}
   keyboard.append(key);
  }
  rangeText.textContent=count+' teclas · '+(count===61?'DO2 a DO7':'LA0 a DO8')+' · todas visibles';
@@ -99,7 +101,7 @@ function draw(t){
  for(const n of notes){if(!selected(n)||n.start>t+lookAhead||n.end<t-.5)continue;
   const key=keyMap.get(n.midi);if(!key)continue;
   const y=height-(n.start-t)*pxPerSecond-(n.end-n.start)*pxPerSecond;
-  const el=document.createElement('div');el.className='falling-note '+n.hand;
+  const el=document.createElement('div');el.className='falling-note '+n.hand;el.textContent=n.name||names[n.midi%12];el.style.display='flex';el.style.alignItems='center';el.style.justifyContent='center';el.style.fontSize='clamp(8px,.85vw,12px)';el.style.fontWeight='700';el.style.color='#fff';el.style.textShadow='0 1px 2px #172033';el.style.overflow='hidden';
   el.style.left=(key.offsetLeft+key.offsetWidth*.15)+'px';el.style.width=Math.max(4,key.offsetWidth*.7)+'px';
   el.style.top=Math.max(-100,Math.min(height+100,y))+'px';el.style.height=Math.max(7,(n.end-n.start)*pxPerSecond)+'px';
   screenEl.append(el);
