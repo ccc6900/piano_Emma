@@ -50,6 +50,7 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
   <div class="control"><label for="librarySelect">Mi biblioteca</label><select id="librarySelect"><option value="">Cargando biblioteca...</option></select></div>
   <button id="libraryLoad" type="button" disabled> Cargar canción </button><button id="libraryDelete" type="button" disabled> Borrar de biblioteca </button>
   <div class="control"><label for="hand">Qué mano practicar</label><select id="hand"><option value="both">Las dos manos</option><option value="right">Solo mano derecha</option><option value="left">Solo mano izquierda</option></select></div>
+  <label class="audio-toggle" style="padding:10px 0"><input id="melodyOnly" type="checkbox" checked> Solo melodía sencilla (mano derecha)</label>
   <div class="control" style="min-width:190px"><label for="speed">Velocidad: <strong id="speedValue">100 %</strong></label><input id="speed" type="range" min="0" max="100" step="1" value="100" style="width:190px;accent-color:#62a7ff"></div>
   <button class="primary" id="play" disabled>▶ Reproducir</button><button id="pause" disabled>Ⅱ Pausar</button><button id="restart" disabled>↺ Volver al inicio</button>
  </div>
@@ -69,7 +70,7 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
 const sizeSelect=document.getElementById('keyboardSize'),keyboard=document.getElementById('keyboard'),rangeText=document.getElementById('rangeText');
 const screenEl=document.getElementById('screen'),screenMessage=document.getElementById('screenMessage');
 const names=['DO','DO♯','RE','RE♯','MI','FA','FA♯','SOL','SOL♯','LA','LA♯','SI'],blackNotes=new Set([1,3,6,8,10]);
-let notes=[],duration=0,playing=false,pausedAt=0,startedAt=0,raf=0,lastFrame=0;
+let notes=[],originalNotes=[],duration=0,playing=false,pausedAt=0,startedAt=0,raf=0,lastFrame=0;
 let measureTimes=[0],practiceStartTime=0,practiceEndTime=0,playbackSpeed=1;
 let audioContext=null,pianoInstrument=null,audioLoading=null,audioScheduledUntil=0,scheduledAudioNotes=new Set(),audioSources=[];
 const pxPerSecond=38,lookAhead=5.8;
@@ -189,10 +190,36 @@ function parseMidi(buffer){
  result.measureTimes=barSeconds;return result;
 }
 
+function simplifyRightHand(source){
+ const right=source.filter(n=>n.hand==='right').slice().sort((a,b)=>a.start-b.start||b.midi-a.midi);
+ const groups=[];
+ for(const n of right){
+  let group=groups[groups.length-1];
+  if(!group||n.start-group.firstStart>0.10){group={firstStart:n.start,items:[]};groups.push(group)}
+  group.items.push(n);
+ }
+ const melody=groups.map(g=>g.items.reduce((best,n)=>n.midi>best.midi?n:best,g.items[0])).sort((a,b)=>a.start-b.start);
+ for(let i=0;i<melody.length-1;i++){
+  const next=melody[i+1];
+  if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
+ }
+ return melody.filter(n=>n.end>n.start);
+}
+function applyMelodyMode(){
+ const simple=document.getElementById('melodyOnly').checked;
+ notes=simple?simplifyRightHand(originalNotes):originalNotes.slice();
+ duration=Math.max(...notes.map(n=>n.end),0);
+ if(!notes.length){document.getElementById('status').textContent='No se han encontrado notas de melodía en la mano derecha. Desactiva «Solo melodía sencilla» para escuchar todas las notas.';document.getElementById('play').disabled=true;draw(pausedAt);return}
+ pausedAt=Math.min(pausedAt,duration);practiceStartTime=0;practiceEndTime=duration;
+ updatePracticeControls();document.getElementById('play').disabled=false;document.getElementById('restart').disabled=false;
+ document.getElementById('status').textContent=notes.length.toLocaleString('es-ES')+' notas '+(simple?'de melodía derecha':'de la canción completa')+' · duración '+formatTime(duration);
+ draw(0);
+}
 function loadNotes(list,fileName){
- notes=list;duration=Math.max(...notes.map(n=>n.end));measureTimes=Array.isArray(list.measureTimes)&&list.measureTimes.length>1?list.measureTimes:[...Array(Math.ceil(duration/2)+1)].map((_,i)=>Math.min(i*2,duration));
+ originalNotes=list.slice();notes=list;duration=Math.max(...notes.map(n=>n.end));measureTimes=Array.isArray(list.measureTimes)&&list.measureTimes.length>1?list.measureTimes:[...Array(Math.ceil(duration/2)+1)].map((_,i)=>Math.min(i*2,duration));
  if(measureTimes[measureTimes.length-1]<duration)measureTimes.push(duration);
- practiceStartTime=0;practiceEndTime=duration;pausedAt=0;playing=false;cancelAnimationFrame(raf);updatePracticeControls();
+ practiceStartTime=0;practiceEndTime=duration;pausedAt=0;playing=false;cancelAnimationFrame(raf);
+ document.getElementById('melodyOnly').checked=true;applyMelodyMode();
  document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;document.getElementById('restart').disabled=false;
  document.getElementById('songTitle').textContent=fileName;screenMessage.textContent='Canción cargada. Pulsa Reproducir.';screenMessage.style.display='grid';
  document.getElementById('status').textContent=notes.length.toLocaleString('es-ES')+' notas cargadas · duración '+formatTime(duration);
@@ -265,6 +292,7 @@ document.getElementById('audioEnabled').addEventListener('change',async e=>{if(!
 document.getElementById('volume').addEventListener('input',e=>{document.getElementById('audioStatus').textContent='Volumen: '+e.target.value+'%' });
 document.getElementById('speed').addEventListener('input',e=>{const value=Number(e.target.value);document.getElementById('speedValue').textContent=value+' %';if(value===0&&playing){pause();document.getElementById('status').textContent='Velocidad 0 % · reproducción detenida'}else if(playing){pausedAt+=(performance.now()-startedAt)/1000*playbackSpeed;playbackSpeed=value/100;startedAt=performance.now()}});
 document.getElementById('applyPractice').addEventListener('click',applyPractice);
+document.getElementById('melodyOnly').addEventListener('change',()=>{const wasPlaying=playing;if(playing)pause();stopAudio();pausedAt=0;applyMelodyMode();screenMessage.textContent=document.getElementById('melodyOnly').checked?'Modo sencillo: solo la melodía de la mano derecha.':'Modo completo: todas las notas.';screenMessage.style.display='grid'});
 document.getElementById('practiceStart').addEventListener('change',()=>{const a=Number(document.getElementById('practiceStart').value),b=document.getElementById('practiceEnd');if(Number(b.value)<a)b.value=String(a)});
 document.getElementById('practiceEnd').addEventListener('change',()=>{const a=Number(document.getElementById('practiceStart').value),b=Number(document.getElementById('practiceEnd').value);if(b<a)document.getElementById('practiceEnd').value=String(a)});
 sizeSelect.addEventListener('change',()=>{renderKeyboard(Number(sizeSelect.value));draw(pausedAt)});
