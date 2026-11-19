@@ -158,8 +158,10 @@ function buildMidiReport(list,name){
   lines.push('Primeras 35 notas (segundos / nota / MIDI / duración):');
   lines.push(sorted.slice(0,35).map(n=>n.start.toFixed(2)+'s '+n.name+' '+n.midi+' ('+(n.end-n.start).toFixed(2)+'s)').join(' | '));
  }
+ const channels=new Map();for(const n of list){const k=n.channel??0;if(!channels.has(k))channels.set(k,[]);channels.get(k).push(n)}
+ if(channels.size>1){lines.push('','RESUMEN POR CANAL MIDI');for(const [ch,arr] of channels){const pitches=arr.map(n=>n.midi);const sorted=arr.slice().sort((a,b)=>a.start-b.start);const poly=sorted.filter((n,i)=>i&&n.start<sorted[i-1].end-0.025).length;lines.push('Canal '+(ch+1)+': '+arr.length+' notas · rango '+Math.min(...pitches)+'–'+Math.max(...pitches)+' · solapamientos '+poly+' · primeras notas: '+sorted.slice(0,18).map(n=>n.start.toFixed(2)+'s '+n.name+n.midi).join(' | '))}}
  lines.push('','SECUENCIA GLOBAL INICIAL (primeras 80 notas por inicio)');
- lines.push(list.slice().sort((a,b)=>a.start-b.start).slice(0,80).map(n=>n.start.toFixed(2)+'s '+n.name+n.midi+' [P'+(n.track+1)+']').join(' | '));
+ lines.push(list.slice().sort((a,b)=>a.start-b.start).slice(0,80).map(n=>n.start.toFixed(2)+'s '+n.name+n.midi+' [P'+(n.track+1)+' C'+((n.channel??0)+1)+']').join(' | '));
  return lines.join('\\n');
 }
 async function analyzeSelectedMidi(){
@@ -203,8 +205,9 @@ function parseMidi(buffer){
    if(status===240||status===247){const n=readVar(end);p+=n;continue}
    const kind=status>>4,channel=status&15,a=data[p++],b=(kind===12||kind===13)?0:data[p++];
    if(channel===9)continue;
-   if(kind===9&&b>0){const q=active.get(a)||[];q.push(tick);active.set(a,q)}
-   else if(kind===8||(kind===9&&b===0)){const q=active.get(a);if(q&&q.length){const start=q.shift();rawNotes.push({track:tr,trackName,midi:a,startTick:start,endTick:Math.max(start+1,tick)})}}
+   const noteKey=channel+':'+a;
+   if(kind===9&&b>0){const q=active.get(noteKey)||[];q.push(tick);active.set(noteKey,q)}
+   else if(kind===8||(kind===9&&b===0)){const q=active.get(noteKey);if(q&&q.length){const start=q.shift();rawNotes.push({track:tr,trackName,channel,midi:a,startTick:start,endTick:Math.max(start+1,tick)})}}
   }
   p=end;
  }
@@ -221,7 +224,7 @@ function parseMidi(buffer){
  }
  const barSeconds=boundaries.map(secondsAt),songEnd=secondsAt(maxTick);
  if(barSeconds[barSeconds.length-1]<songEnd-0.001)barSeconds.push(songEnd);
- const result=rawNotes.map(n=>{const label=n.trackName.toLowerCase(),hand=/left|izq|mano izquierda/.test(label)?'left':/right|der|mano derecha/.test(label)?'right':(n.midi<60?'left':'right');return{midi:n.midi,name:names[n.midi%12],start:secondsAt(n.startTick),end:secondsAt(n.endTick),hand,track:n.track,trackName:n.trackName||('Pista '+(n.track+1))}}).sort((a,b)=>a.start-b.start);
+ const result=rawNotes.map(n=>{const label=n.trackName.toLowerCase(),hand=/left|izq|mano izquierda/.test(label)?'left':/right|der|mano derecha/.test(label)?'right':(n.midi<60?'left':'right');return{midi:n.midi,name:names[n.midi%12],start:secondsAt(n.startTick),end:secondsAt(n.endTick),hand,track:n.track,channel:n.channel,trackName:n.trackName||('Pista '+(n.track+1))}}).sort((a,b)=>a.start-b.start);
  result.measureTimes=barSeconds;return result;
 }
 
