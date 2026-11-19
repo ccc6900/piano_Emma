@@ -198,9 +198,9 @@ function draw(t){
 function scheduleAudio(t,speed){
  if(!pianoInstrument||!document.getElementById('audioEnabled').checked)return;
  const horizon=t+0.14*speed,volume=Number(document.getElementById('volume').value)/100;
- for(let i=0;i<notes.length;i++){const n=notes[i];if(n.start<audioScheduledUntil-0.0001||n.start>horizon||n.end<=t||!selected(n)||scheduledAudioNotes.has(i))continue;
+ for(let i=0;i<notes.length;i++){const n=notes[i];if(n.start>horizon||n.end<=t||!selected(n)||scheduledAudioNotes.has(i))continue;
   const pitch=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][n.midi%12];
-  const octave=Math.floor(n.midi/12)-1,when=audioContext.currentTime+Math.max(0,(n.start-t)/speed),noteDuration=Math.max(0.06,(n.end-n.start)/speed);
+  const octave=Math.floor(n.midi/12)-1,when=audioContext.currentTime+Math.max(0,(n.start-t)/speed),noteDuration=Math.max(0.06,(n.end-Math.max(n.start,t))/speed);
   try{const source=pianoInstrument.play(pitch+octave,when,{duration:noteDuration,gain:volume});if(source)audioSources.push(source);scheduledAudioNotes.add(i)}catch(e){console.warn('No se pudo reproducir una nota MIDI',e)}
  }
  audioScheduledUntil=horizon;
