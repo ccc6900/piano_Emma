@@ -229,6 +229,27 @@ function parseMidi(buffer){
 }
 
 function simplifyRightHand(source){
+ // Mana - Rayando el Sol (KAR): la melodía principal aparece en el canal MIDI 3.
+ // El canal 7 contiene una segunda capa/duplicación; se evita mezclarla con la melodía.
+ const rayandoChannel=source.filter(n=>n.channel===2);
+ if(source.length>=1900&&source.length<=2030&&rayandoChannel.length>=50&&rayandoChannel.length<=70){
+  const lead=rayandoChannel.slice().sort((a,b)=>a.start-b.start||b.midi-a.midi);
+  const groups=[];
+  for(const n of lead){
+   let g=groups[groups.length-1];
+   if(!g||n.start-g.firstStart>0.10){g={firstStart:n.start,items:[]};groups.push(g)}
+   g.items.push(n);
+  }
+  const melody=groups.map(g=>g.items.reduce((best,n)=>n.midi>best.midi?n:best,g.items[0])).sort((a,b)=>a.start-b.start);
+  for(let i=0;i<melody.length-1;i++){
+   const next=melody[i+1];
+   if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
+  }
+  // Transposición de dos semitonos hacia abajo: de Sol mayor a Fa mayor,
+  // manteniendo intervalos y ritmo y reduciendo las teclas negras.
+  return melody.filter(n=>n.end>n.start).map(n=>{const midi=n.midi-2;return {...n,midi,name:names[(midi%12+12)%12],hand:'right'}});
+ }
+
 
  // Mecano - Un Año Más (KAR): la pista llamada "Mecano" contiene la línea
  // principal, pero también algunos acordes. No mezclarla con los arreglos
