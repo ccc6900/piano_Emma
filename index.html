@@ -208,7 +208,7 @@ function simplifyRightHand(source){
 function applyMelodyMode(){
  const simple=document.getElementById('melodyOnly').checked;
  notes=simple?simplifyRightHand(originalNotes):originalNotes.slice();
- duration=Math.max(...notes.map(n=>n.end),0);
+ duration=Math.max(...originalNotes.map(n=>n.end),0);
  if(!notes.length){document.getElementById('status').textContent='No se han encontrado notas de melodía en la mano derecha. Desactiva «Solo melodía sencilla» para escuchar todas las notas.';document.getElementById('play').disabled=true;draw(pausedAt);return}
  pausedAt=Math.min(pausedAt,duration);practiceStartTime=0;practiceEndTime=duration;
  updatePracticeControls();document.getElementById('play').disabled=false;document.getElementById('restart').disabled=false;
