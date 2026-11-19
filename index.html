@@ -226,6 +226,37 @@ function parseMidi(buffer){
 }
 
 function simplifyRightHand(source){
+ // La Playa (KAR): la linea melodica cambia de pista durante la introduccion.
+ // Pista 5 (indice 4) aporta el primer tramo y Pista 6 (indice 5)
+ // desarrolla la melodia principal desde aproximadamente el segundo 27.
+ const playaStats=new Map();
+ for(const n of source){
+  if(!Number.isInteger(n.track))continue;
+  if(!playaStats.has(n.track))playaStats.set(n.track,[]);
+  playaStats.get(n.track).push(n);
+ }
+ const p5=playaStats.get(4)||[],p6=playaStats.get(5)||[];
+ const p5Range=p5.length?Math.min(...p5.map(n=>n.midi)):0;
+ const p6Range=p6.length?Math.min(...p6.map(n=>n.midi)):0;
+ const playaMatch=source.length>3000&&p5.length>=250&&p5.length<=350&&p5Range>=44&&p5Range<=46
+  &&p6.length>=350&&p6.length<=450&&p6Range>=56&&p6Range<=58;
+ if(playaMatch){
+  const lead=source.filter(n=>(n.track===4&&n.start<27.8)||(n.track===5&&n.start>=27.8))
+   .slice().sort((a,b)=>a.start-b.start||b.midi-a.midi);
+  const groups=[];
+  for(const n of lead){
+   let g=groups[groups.length-1];
+   if(!g||n.start-g.firstStart>0.09){g={firstStart:n.start,items:[]};groups.push(g)}
+   g.items.push(n);
+  }
+  const melody=groups.map(g=>g.items.reduce((best,n)=>n.midi>best.midi?n:best,g.items[0])).sort((a,b)=>a.start-b.start);
+  for(let i=0;i<melody.length-1;i++){
+   const next=melody[i+1];
+   if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
+  }
+  return melody.filter(n=>n.end>n.start);
+ }
+
  // Mecano - Un Año Más (KAR): la pista llamada "Mecano" contiene la línea
  // principal, pero también algunos acordes. No mezclarla con los arreglos
  // de las demás pistas: escoger una sola nota por cada ataque simultáneo.
