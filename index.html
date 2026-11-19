@@ -12,7 +12,7 @@ main{width:100%;max-width:none;margin:0;padding:18px clamp(8px,1.2vw,20px) 36px}
 .topline{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}h2{font-size:19px;margin:0 0 14px}
 label{color:var(--muted);font-size:14px;display:block;margin-bottom:7px}select,button,.file-label{font:inherit;border-radius:10px;border:1px solid var(--line);padding:10px 14px;background:#202c43;color:var(--text)}
 select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.primary,.file-label{background:#2467bd;border-color:#438de5}button:disabled{opacity:.45;cursor:not-allowed}
-.controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.control{min-width:150px}.file-label input{display:none}
+.controls{display:flex;gap:10px;align-items:end;flex-wrap:wrap}.control{min-width:150px}.file-label input{display:none}.audio-controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;margin-top:14px}.audio-controls label{margin:0}.audio-controls input[type=range]{width:150px;vertical-align:middle}.audio-toggle{display:flex;align-items:center;gap:8px;color:var(--text)}
 .screen{height:clamp(520px,68vh,850px);position:relative;overflow:hidden;border-radius:13px 13px 0 0;border:1px solid var(--line);border-bottom:0;background:#101a2c;margin-top:12px}
 .screen:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:#d8e6ff;box-shadow:0 0 14px #62a7ff;z-index:4;pointer-events:none}
 .screen-message{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:20px;color:var(--muted);z-index:1}
@@ -53,14 +53,17 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
   <div class="control"><label for="speed">Velocidad</label><select id="speed"><option value="50">50 %</option><option value="75">75 %</option><option value="100" selected>100 %</option></select></div>
   <button class="primary" id="play" disabled>▶ Reproducir</button><button id="pause" disabled>Ⅱ Pausar</button><button id="restart" disabled>↺ Volver al inicio</button>
  </div>
+ <div class="audio-controls"><label class="audio-toggle"><input id="audioEnabled" type="checkbox" checked> Escuchar piano</label><label for="volume">Volumen <input id="volume" type="range" min="0" max="100" value="65"></label><span class="hint" id="audioStatus">Audio MIDI activado · sonido de piano</span></div>
  <div class="controls" style="margin-top:14px"><div class="control"><label for="libraryPassword">Contraseña de la biblioteca</label><input id="libraryPassword" type="password" autocomplete="current-password" placeholder="Introduce la contraseña" style="font:inherit;border-radius:10px;border:1px solid var(--line);padding:10px 14px;background:#202c43;color:var(--text);width:100%"></div><button id="libraryConnect" class="primary" type="button">Conectar biblioteca</button></div><p class="hint" id="libraryHint">La biblioteca se guarda en la nube y podrás usarla desde otros dispositivos. La contraseña no se guarda en este navegador.</p>
 </section>
 </main>
+<script src="https://cdn.jsdelivr.net/npm/soundfont-player@0.12.0/dist/soundfont-player.min.js"></script>
 <script>
 const sizeSelect=document.getElementById('keyboardSize'),keyboard=document.getElementById('keyboard'),rangeText=document.getElementById('rangeText');
 const screenEl=document.getElementById('screen'),screenMessage=document.getElementById('screenMessage');
 const names=['DO','DO♯','RE','RE♯','MI','FA','FA♯','SOL','SOL♯','LA','LA♯','SI'],blackNotes=new Set([1,3,6,8,10]);
 let notes=[],duration=0,playing=false,pausedAt=0,startedAt=0,raf=0,lastFrame=0;
+let audioContext=null,pianoInstrument=null,audioLoading=null,audioScheduledUntil=0,scheduledAudioNotes=new Set(),audioSources=[];
 const pxPerSecond=38,lookAhead=5.8;
 function renderKeyboard(count){
  keyboard.replaceChildren();const start=count===61?36:21,end=start+count;
@@ -192,16 +195,37 @@ function draw(t){
  document.getElementById('status').textContent=formatTime(t)+' / '+formatTime(duration)+' · '+notes.filter(n=>selected(n)&&n.start<=t&&n.end>=t).length+' notas sonando';
  document.getElementById('progressBar').style.width=(duration?t/duration*100:0)+'%';
 }
+function scheduleAudio(t,speed){
+ if(!pianoInstrument||!document.getElementById('audioEnabled').checked)return;
+ const horizon=t+0.14*speed,volume=Number(document.getElementById('volume').value)/100;
+ for(let i=0;i<notes.length;i++){const n=notes[i];if(n.start<audioScheduledUntil-0.0001||n.start>horizon||n.end<=t||!selected(n)||scheduledAudioNotes.has(i))continue;
+  const pitch=['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'][n.midi%12];
+  const octave=Math.floor(n.midi/12)-1,when=audioContext.currentTime+Math.max(0,(n.start-t)/speed),noteDuration=Math.max(0.06,(n.end-n.start)/speed);
+  try{const source=pianoInstrument.play(pitch+octave,when,{duration:noteDuration,gain:volume});if(source)audioSources.push(source);scheduledAudioNotes.add(i)}catch(e){console.warn('No se pudo reproducir una nota MIDI',e)}
+ }
+ audioScheduledUntil=horizon;
+}
+async function prepareAudio(){
+ if(pianoInstrument)return; if(audioLoading)return audioLoading;
+ audioLoading=(async()=>{if(!window.Soundfont)throw Error('No se ha podido cargar el reproductor de sonido. Comprueba la conexión a Internet.');const AudioCtx=window.AudioContext||window.webkitAudioContext;if(!AudioCtx)throw Error('Este navegador no admite reproducción de audio.');audioContext=audioContext||new AudioCtx();await audioContext.resume();pianoInstrument=await Soundfont.instrument(audioContext,'acoustic_grand_piano',{soundfont:'FluidR3_GM'});})();
+ try{await audioLoading;document.getElementById('audioStatus').textContent='Piano listo · sonido activado'}finally{audioLoading=null}
+}
+function stopAudio(){for(const source of audioSources){try{source.stop()}catch(e){}}audioSources=[];scheduledAudioNotes.clear();audioScheduledUntil=pausedAt}
 function frame(now){if(!playing)return;const speed=Number(document.getElementById('speed').value)/100;const t=pausedAt+(now-startedAt)/1000*speed;
- draw(t);if(t>=duration){playing=false;pausedAt=duration;document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;screenMessage.textContent='¡Canción terminada! Puedes volver al inicio.';screenMessage.style.display='grid';return}
+ scheduleAudio(t,speed);draw(t);if(t>=duration){playing=false;pausedAt=duration;document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;screenMessage.textContent='¡Canción terminada! Puedes volver al inicio.';screenMessage.style.display='grid';return}
  raf=requestAnimationFrame(frame)}
-function play(){if(!notes.length)return;if(pausedAt>=duration)pausedAt=0;playing=true;startedAt=performance.now();screenMessage.style.display='none';document.getElementById('play').disabled=true;document.getElementById('pause').disabled=false;raf=requestAnimationFrame(frame)}
-function pause(){if(!playing)return;const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;playing=false;cancelAnimationFrame(raf);document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;draw(pausedAt);screenMessage.textContent='En pausa';screenMessage.style.display='grid'}
-function restart(){playing=false;cancelAnimationFrame(raf);pausedAt=0;document.getElementById('play').disabled=!notes.length;document.getElementById('pause').disabled=true;screenMessage.textContent='Preparado desde el principio. Pulsa Reproducir.';screenMessage.style.display='grid';draw(0)}
+async function play(){if(!notes.length)return;if(pausedAt>=duration)pausedAt=0;
+ const useAudio=document.getElementById('audioEnabled').checked;
+ if(useAudio){document.getElementById('audioStatus').textContent='Cargando sonido de piano...';try{await prepareAudio()}catch(err){document.getElementById('audioStatus').textContent=err.message;document.getElementById('audioEnabled').checked=false}}
+ playing=true;startedAt=performance.now();audioScheduledUntil=pausedAt;scheduledAudioNotes.clear();screenMessage.style.display='none';document.getElementById('play').disabled=true;document.getElementById('pause').disabled=false;raf=requestAnimationFrame(frame)}
+function pause(){if(!playing)return;const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;playing=false;cancelAnimationFrame(raf);stopAudio();document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;draw(pausedAt);screenMessage.textContent='En pausa';screenMessage.style.display='grid'}
+function restart(){playing=false;cancelAnimationFrame(raf);stopAudio();pausedAt=0;document.getElementById('play').disabled=!notes.length;document.getElementById('pause').disabled=true;screenMessage.textContent='Preparado desde el principio. Pulsa Reproducir.';screenMessage.style.display='grid';draw(0)}
 document.getElementById('songFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(!libraryPassword)throw Error('Primero conecta la biblioteca con la contraseña.');const isMidi=/\.midi?$/i.test(file.name);const list=isMidi?parseMidi(await file.arrayBuffer()):parseCSV(await file.text());await saveToLibrary(file);loadNotes(list,file.name);document.getElementById('status').textContent=list.length.toLocaleString('es-ES')+' notas cargadas y guardadas en la biblioteca en la nube · duración '+formatTime(Math.max(...list.map(n=>n.end)));}catch(err){screenMessage.textContent=err.message;screenMessage.style.display='grid';document.getElementById('status').textContent='No se pudo cargar el archivo.'}e.target.value='';});
 document.getElementById('librarySelect').addEventListener('change',updateLibraryButtons);document.getElementById('libraryLoad').addEventListener('click',()=>loadFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryDelete').addEventListener('click',()=>deleteFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryConnect').addEventListener('click',connectLibrary);document.getElementById('libraryPassword').addEventListener('keydown',e=>{if(e.key==='Enter')connectLibrary()});document.getElementById('songFile').disabled=true;
 document.getElementById('play').addEventListener('click',play);document.getElementById('pause').addEventListener('click',pause);document.getElementById('restart').addEventListener('click',restart);
-document.getElementById('hand').addEventListener('change',()=>draw(pausedAt));document.getElementById('speed').addEventListener('change',()=>{if(playing){pausedAt+=(performance.now()-startedAt)/1000*(Number(document.getElementById('speed').value)/100);startedAt=performance.now()}});
+document.getElementById('hand').addEventListener('change',()=>{if(playing){const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;startedAt=performance.now();stopAudio()}draw(pausedAt)});
+document.getElementById('audioEnabled').addEventListener('change',async e=>{if(!e.target.checked){stopAudio();document.getElementById('audioStatus').textContent='Audio desactivado'}else{document.getElementById('audioStatus').textContent='El sonido se cargará al pulsar Reproducir';if(playing){const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;startedAt=performance.now();stopAudio();try{await prepareAudio()}catch(err){document.getElementById('audioStatus').textContent=err.message}}}});
+document.getElementById('volume').addEventListener('input',e=>{document.getElementById('audioStatus').textContent='Volumen: '+e.target.value+'%' });document.getElementById('speed').addEventListener('change',()=>{if(playing){pausedAt+=(performance.now()-startedAt)/1000*(Number(document.getElementById('speed').value)/100);startedAt=performance.now()}});
 sizeSelect.addEventListener('change',()=>{renderKeyboard(Number(sizeSelect.value));draw(pausedAt)});
 const resizeObserver=new ResizeObserver(()=>{renderKeyboard(Number(sizeSelect.value));draw(pausedAt)});resizeObserver.observe(keyboard.parentElement);
 renderKeyboard(61);
