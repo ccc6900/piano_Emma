@@ -120,7 +120,7 @@ async function refreshLibrary(){
  sel.replaceChildren();const first=document.createElement('option');first.value='';first.textContent=data.songs.length?'Elige una canción guardada':'La biblioteca está vacía';sel.append(first);
  data.songs.forEach(song=>{const o=document.createElement('option');o.value=song.path;o.textContent=song.name;sel.append(o)});updateLibraryButtons();
 }
-function updateLibraryButtons(){const has=!!document.getElementById('librarySelect').value;document.getElementById('libraryLoad').disabled=!has;document.getElementById('libraryDelete').disabled=!has;document.getElementById('analyzeMidi').disabled=!has||!/\\.midi?$/i.test(document.getElementById('librarySelect').selectedOptions[0]?.textContent||'')}
+function updateLibraryButtons(){const has=!!document.getElementById('librarySelect').value;document.getElementById('libraryLoad').disabled=!has;document.getElementById('libraryDelete').disabled=!has;document.getElementById('analyzeMidi').disabled=!has||!/\.midi?$/i.test(document.getElementById('librarySelect').selectedOptions[0]?.textContent||'')}
 async function connectLibrary(){
  const pass=document.getElementById('libraryPassword').value||localStorage.getItem(PASSWORD_STORAGE_KEY)||'';if(!pass){document.getElementById('libraryHint').textContent='Escribe la contraseña para conectar.';return}
  libraryPassword=pass;
@@ -164,7 +164,7 @@ function buildMidiReport(list,name){
 }
 async function analyzeSelectedMidi(){
  const path=document.getElementById('librarySelect').value;if(!path)return;
- if(!/\\.midi?$/i.test(path))throw Error('Selecciona un archivo MIDI (.mid o .midi), no un CSV.');
+ if(!/\.midi?$/i.test(path))throw Error('Selecciona un archivo MIDI (.mid o .midi), no un CSV.');
  document.getElementById('analyzeMidi').disabled=true;document.getElementById('libraryHint').textContent='Analizando el MIDI de la biblioteca...';
  try{
   const blob=await libraryRequest('?action=download&path='+encodeURIComponent(path));
