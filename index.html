@@ -225,7 +225,7 @@ function parseMidi(buffer){
  result.measureTimes=barSeconds;return result;
 }
 
-function simplifyRightHand(source){ }
+function simplifyRightHand(source){
 
  // Mecano - Un Año Más (KAR): la pista llamada "Mecano" contiene la línea
  // principal, pero también algunos acordes. No mezclarla con los arreglos
@@ -255,6 +255,35 @@ function simplifyRightHand(source){ }
   &&[...trackNames.entries()].some(([id,name])=>id===1&&/Elec\. Piano/i.test(name));
  if(bellaCiaoTracks){
   const melody=source.filter(n=>n.track===0||n.track===1).slice().sort((a,b)=>a.start-b.start||a.midi-b.midi);
+  for(let i=0;i<melody.length-1;i++){
+   const next=melody[i+1];
+   if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
+  }
+  return melody.filter(n=>n.end>n.start);
+ }
+ // La Oreja de Van Gogh - La Playa (KAR).
+ // Pista 5 aporta la primera frase; pista 6 continúa la melodía.
+ // Evitamos mezclar los acordes de las pistas 10, 13 y 11.
+ const playaTracks=new Map();
+ for(const n of source){
+  if(!Number.isInteger(n.track))continue;
+  if(!playaTracks.has(n.track))playaTracks.set(n.track,[]);
+  playaTracks.get(n.track).push(n);
+ }
+ const playa5=playaTracks.get(4)||[];
+ const playa6=playaTracks.get(5)||[];
+ const playaSong=source.length>3000&&playa5.length>=280&&playa5.length<=310&&playa6.length>=380&&playa6.length<=410;
+ if(playaSong){
+  const lead=source.filter(n=>(n.track===4&&n.start<21.6)||(n.track===5&&n.start>=27.7))
+   .slice().sort((a,b)=>a.start-b.start||a.midi-b.midi);
+  const melody=[];
+  for(const n of lead){
+   const previous=melody[melody.length-1];
+   if(previous&&n.start-previous.start<0.12){
+    // Si coinciden varias notas, conservar la nota más aguda de ese ataque.
+    if(n.midi>previous.midi)melody[melody.length-1]=n;
+   }else melody.push(n);
+  }
   for(let i=0;i<melody.length-1;i++){
    const next=melody[i+1];
    if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
