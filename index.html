@@ -229,6 +229,32 @@ function parseMidi(buffer){
 }
 
 function simplifyRightHand(source){
+ // Mana - Rayando el Sol (MIDIfind): usar solo Guitarra 1 y Guitarra 2.
+ // Se excluyen el acompañamiento, el bajo, el solo de acordes y las cuerdas.
+ const rayandoFindTracks=new Map();
+ for(const n of source){
+  if(!Number.isInteger(n.track))continue;
+  if(!rayandoFindTracks.has(n.track))rayandoFindTracks.set(n.track,[]);
+  rayandoFindTracks.get(n.track).push(n);
+ }
+ const rayandoFindGuitar1=[...(rayandoFindTracks.entries())].find(([id,arr])=>/Guitarra 1/i.test(arr[0]?.trackName||''));
+ const rayandoFindGuitar2=[...(rayandoFindTracks.entries())].find(([id,arr])=>/Guitarra 2/i.test(arr[0]?.trackName||''));
+ const rayandoFindSong=source.length>=5800&&source.length<=6050&&rayandoFindGuitar1&&rayandoFindGuitar2&&rayandoFindGuitar1[1].length>=420&&rayandoFindGuitar1[1].length<=450&&rayandoFindGuitar2[1].length>=20&&rayandoFindGuitar2[1].length<=35;
+ if(rayandoFindSong){
+  const lead=source.filter(n=>n.track===rayandoFindGuitar1[0]||n.track===rayandoFindGuitar2[0]).slice().sort((a,b)=>a.start-b.start||b.midi-a.midi);
+  const groups=[];
+  for(const n of lead){
+   let g=groups[groups.length-1];
+   if(!g||n.start-g.firstStart>0.10){g={firstStart:n.start,items:[]};groups.push(g)}
+   g.items.push(n);
+  }
+  const melody=groups.map(g=>g.items.reduce((best,n)=>n.midi>best.midi?n:best,g.items[0])).sort((a,b)=>a.start-b.start);
+  for(let i=0;i<melody.length-1;i++){
+   const next=melody[i+1];
+   if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
+  }
+  return melody.filter(n=>n.end>n.start).map(n=>({...n,hand:'right'}));
+ }
  // Bella Ciao - Manu Pilas (MIDI de piano en una sola pista).
  // La voz principal está en el registro agudo; se separa del acompañamiento grave.
  const manuPilas=source.length>=1250&&source.length<=1350&&source.some(n=>/Grand Piano/i.test(n.trackName||''));
