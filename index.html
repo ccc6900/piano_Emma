@@ -53,7 +53,7 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
   <div class="control"><label for="speed">Velocidad</label><select id="speed"><option value="50">50 %</option><option value="75">75 %</option><option value="100" selected>100 %</option></select></div>
   <button class="primary" id="play" disabled>▶ Reproducir</button><button id="pause" disabled>Ⅱ Pausar</button><button id="restart" disabled>↺ Volver al inicio</button>
  </div>
- <p class="hint">Puedes subir archivos MIDI (.mid/.midi) o CSV. Las canciones se guardan en la biblioteca de este navegador. Todavía no suena el piano.</p>
+ <div class="controls" style="margin-top:14px"><div class="control"><label for="libraryPassword">Contraseña de la biblioteca</label><input id="libraryPassword" type="password" autocomplete="current-password" placeholder="Introduce la contraseña" style="font:inherit;border-radius:10px;border:1px solid var(--line);padding:10px 14px;background:#202c43;color:var(--text);width:100%"></div><button id="libraryConnect" class="primary" type="button">Conectar biblioteca</button></div><p class="hint" id="libraryHint">La biblioteca se guarda en la nube y podrás usarla desde otros dispositivos. La contraseña no se guarda en este navegador.</p>
 </section>
 </main>
 <script>
@@ -91,43 +91,42 @@ function parseCSV(text){
  out.sort((a,b)=>a.start-b.start);return out;
 }
 
-let libraryDB=null;
-function openLibrary(){
- return new Promise((resolve,reject)=>{
-  const req=indexedDB.open('PianoEmmaLibrary',1);
-  req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains('songs'))db.createObjectStore('songs',{keyPath:'id'})};
-  req.onsuccess=()=>{libraryDB=req.result;resolve(libraryDB)};
-  req.onerror=()=>reject(req.error);
- });
-}
-function storeRequest(mode,action){
- return new Promise((resolve,reject)=>{
-  const tx=libraryDB.transaction('songs',mode),store=tx.objectStore('songs');
-  const req=action(store);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
- });
-}
-async function saveToLibrary(name,list){
- const id=String(Date.now())+'-'+Math.random().toString(36).slice(2,8);
- await storeRequest('readwrite',s=>s.put({id,name,notes:list,added:new Date().toISOString()}));
- await refreshLibrary();document.getElementById('librarySelect').value=id;return id;
+const SUPABASE_FUNCTION_URL='https://amckkzemxwuotghdksii.supabase.co/functions/v1/piano-emma-library';
+let libraryPassword='';
+async function libraryRequest(path,options={}){
+ const headers=new Headers(options.headers||{});headers.set('x-piano-password',libraryPassword);
+ const response=await fetch(SUPABASE_FUNCTION_URL+path,{...options,headers});
+ const type=response.headers.get('content-type')||'';
+ if(!response.ok){let message='No se ha podido conectar con la biblioteca.';if(type.includes('application/json')){const data=await response.json();message=data.error||message}else{message=await response.text()||message}throw Error(message)}
+ return type.includes('application/json')?response.json():response.blob();
 }
 async function refreshLibrary(){
- const songs=await storeRequest('readonly',s=>s.getAll()),sel=document.getElementById('librarySelect');
- sel.replaceChildren();const first=document.createElement('option');first.value='';first.textContent=songs.length?'Elige una canción guardada':'La biblioteca está vacía';sel.append(first);
- songs.sort((a,b)=>b.added.localeCompare(a.added)).forEach(song=>{const o=document.createElement('option');o.value=song.id;o.textContent=song.name;sel.append(o)});
- updateLibraryButtons();
+ const sel=document.getElementById('librarySelect'),data=await libraryRequest('?action=list');
+ sel.replaceChildren();const first=document.createElement('option');first.value='';first.textContent=data.songs.length?'Elige una canción guardada':'La biblioteca está vacía';sel.append(first);
+ data.songs.forEach(song=>{const o=document.createElement('option');o.value=song.path;o.textContent=song.name;sel.append(o)});updateLibraryButtons();
 }
 function updateLibraryButtons(){const has=!!document.getElementById('librarySelect').value;document.getElementById('libraryLoad').disabled=!has;document.getElementById('libraryDelete').disabled=!has}
+async function connectLibrary(){
+ const pass=document.getElementById('libraryPassword').value;if(!pass){document.getElementById('libraryHint').textContent='Escribe la contraseña para conectar.';return}
+ libraryPassword=pass;
+ try{await refreshLibrary();document.getElementById('libraryHint').textContent='Biblioteca conectada. Ya puedes subir, cargar y borrar canciones desde cualquier dispositivo.';document.getElementById('songFile').disabled=false}
+ catch(err){libraryPassword='';document.getElementById('libraryHint').textContent=err.message;document.getElementById('librarySelect').innerHTML='<option value="">Biblioteca sin conectar</option>';updateLibraryButtons()}
+}
+async function saveToLibrary(file){
+ const form=new FormData();form.append('file',file,file.name);await libraryRequest('',{method:'POST',body:form});await refreshLibrary();
+ const match=[...document.getElementById('librarySelect').options].find(o=>o.textContent===file.name);if(match)document.getElementById('librarySelect').value=match.value;updateLibraryButtons();
+}
 async function loadFromLibrary(){
- const id=document.getElementById('librarySelect').value;if(!id)return;
- const song=await storeRequest('readonly',s=>s.get(id));if(song)loadNotes(song.notes,song.name);
+ const path=document.getElementById('librarySelect').value;if(!path)return;
+ const blob=await libraryRequest('?action=download&path='+encodeURIComponent(path)),name=path.replace(/^[0-9a-f-]{36}_/i,'');
+ const list=/\\.midi?$/i.test(name)?parseMidi(await blob.arrayBuffer()):parseCSV(await blob.text());loadNotes(list,name);
 }
 async function deleteFromLibrary(){
- const id=document.getElementById('librarySelect').value;if(!id)return;
- const song=await storeRequest('readonly',s=>s.get(id));if(!song)return;
- if(!confirm('¿Quieres borrar "'+song.name+'" de tu biblioteca?'))return;
- await storeRequest('readwrite',s=>s.delete(id));await refreshLibrary();
- document.getElementById('status').textContent='Canción borrada de la biblioteca.';
+ const path=document.getElementById('librarySelect').value;if(!path)return;
+ const song=document.getElementById('librarySelect').selectedOptions[0]?.textContent||'esta canción';
+ if(!confirm('¿Quieres borrar "'+song+'" de tu biblioteca en la nube?'))return;
+ await libraryRequest('',{method:'DELETE',headers:{'Content-Type':'application/json'},body:JSON.stringify({path})});
+ await refreshLibrary();document.getElementById('status').textContent='Canción borrada de la biblioteca en la nube.';
 }
 function parseMidi(buffer){
  const data=new Uint8Array(buffer);let p=0;
@@ -199,8 +198,8 @@ function frame(now){if(!playing)return;const speed=Number(document.getElementByI
 function play(){if(!notes.length)return;if(pausedAt>=duration)pausedAt=0;playing=true;startedAt=performance.now();screenMessage.style.display='none';document.getElementById('play').disabled=true;document.getElementById('pause').disabled=false;raf=requestAnimationFrame(frame)}
 function pause(){if(!playing)return;const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;playing=false;cancelAnimationFrame(raf);document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;draw(pausedAt);screenMessage.textContent='En pausa';screenMessage.style.display='grid'}
 function restart(){playing=false;cancelAnimationFrame(raf);pausedAt=0;document.getElementById('play').disabled=!notes.length;document.getElementById('pause').disabled=true;screenMessage.textContent='Preparado desde el principio. Pulsa Reproducir.';screenMessage.style.display='grid';draw(0)}
-document.getElementById('songFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{const isMidi=/\.midi?$/i.test(file.name);const list=isMidi?parseMidi(await file.arrayBuffer()):parseCSV(await file.text());await saveToLibrary(file.name,list);loadNotes(list,file.name);document.getElementById('status').textContent= list.length.toLocaleString('es-ES')+' notas cargadas y guardadas en tu biblioteca · duración '+formatTime(Math.max(...list.map(n=>n.end)));}catch(err){screenMessage.textContent=err.message;screenMessage.style.display='grid';document.getElementById('status').textContent='No se pudo cargar el archivo.'}e.target.value='';});
-document.getElementById('librarySelect').addEventListener('change',updateLibraryButtons);document.getElementById('libraryLoad').addEventListener('click',loadFromLibrary);document.getElementById('libraryDelete').addEventListener('click',deleteFromLibrary);
+document.getElementById('songFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(!libraryPassword)throw Error('Primero conecta la biblioteca con la contraseña.');const isMidi=/\\.midi?$/i.test(file.name);const list=isMidi?parseMidi(await file.arrayBuffer()):parseCSV(await file.text());await saveToLibrary(file);loadNotes(list,file.name);document.getElementById('status').textContent=list.length.toLocaleString('es-ES')+' notas cargadas y guardadas en la biblioteca en la nube · duración '+formatTime(Math.max(...list.map(n=>n.end)));}catch(err){screenMessage.textContent=err.message;screenMessage.style.display='grid';document.getElementById('status').textContent='No se pudo cargar el archivo.'}e.target.value='';});
+document.getElementById('librarySelect').addEventListener('change',updateLibraryButtons);document.getElementById('libraryLoad').addEventListener('click',()=>loadFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryDelete').addEventListener('click',()=>deleteFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryConnect').addEventListener('click',connectLibrary);document.getElementById('libraryPassword').addEventListener('keydown',e=>{if(e.key==='Enter')connectLibrary()});document.getElementById('songFile').disabled=true;
 document.getElementById('play').addEventListener('click',play);document.getElementById('pause').addEventListener('click',pause);document.getElementById('restart').addEventListener('click',restart);
 document.getElementById('hand').addEventListener('change',()=>draw(pausedAt));document.getElementById('speed').addEventListener('change',()=>{if(playing){pausedAt+=(performance.now()-startedAt)/1000*(Number(document.getElementById('speed').value)/100);startedAt=performance.now()}});
 sizeSelect.addEventListener('change',()=>{renderKeyboard(Number(sizeSelect.value));draw(pausedAt)});
