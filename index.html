@@ -50,8 +50,15 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
   <div class="control"><label for="librarySelect">Mi biblioteca</label><select id="librarySelect"><option value="">Cargando biblioteca...</option></select></div>
   <button id="libraryLoad" type="button" disabled> Cargar canción </button><button id="libraryDelete" type="button" disabled> Borrar de biblioteca </button>
   <div class="control"><label for="hand">Qué mano practicar</label><select id="hand"><option value="both">Las dos manos</option><option value="right">Solo mano derecha</option><option value="left">Solo mano izquierda</option></select></div>
-  <div class="control"><label for="speed">Velocidad</label><select id="speed"><option value="50">50 %</option><option value="75">75 %</option><option value="100" selected>100 %</option></select></div>
+  <div class="control" style="min-width:190px"><label for="speed">Velocidad: <strong id="speedValue">100 %</strong></label><input id="speed" type="range" min="0" max="100" step="1" value="100" style="width:190px;accent-color:#62a7ff"></div>
   <button class="primary" id="play" disabled>▶ Reproducir</button><button id="pause" disabled>Ⅱ Pausar</button><button id="restart" disabled>↺ Volver al inicio</button>
+ </div>
+ <div class="controls" style="margin-top:14px;align-items:end">
+  <div class="control"><label for="practiceStart">Desde el compás</label><select id="practiceStart" disabled><option value="0">1</option></select></div>
+  <div class="control"><label for="practiceEnd">Hasta el compás</label><select id="practiceEnd" disabled><option value="0">1</option></select></div>
+  <label class="audio-toggle" style="padding:10px 0"><input id="practiceLoop" type="checkbox" checked> Repetir este fragmento</label>
+  <button id="applyPractice" type="button" disabled>Aplicar fragmento</button>
+  <span class="hint" id="measureInfo">Carga un MIDI para seleccionar compases.</span>
  </div>
  <div class="audio-controls"><label class="audio-toggle"><input id="audioEnabled" type="checkbox" checked> Escuchar piano</label><label for="volume">Volumen <input id="volume" type="range" min="0" max="100" value="65"></label><span class="hint" id="audioStatus">Audio MIDI activado · sonido de piano</span></div>
  <div class="controls" style="margin-top:14px"><div class="control"><label for="libraryPassword">Contraseña de la biblioteca</label><input id="libraryPassword" type="password" autocomplete="current-password" placeholder="Introduce la contraseña" style="font:inherit;border-radius:10px;border:1px solid var(--line);padding:10px 14px;background:#202c43;color:var(--text);width:100%"></div><button id="libraryConnect" class="primary" type="button">Conectar biblioteca</button></div><p class="hint" id="libraryHint">La biblioteca se guarda en la nube y podrás usarla desde otros dispositivos. La contraseña no se guarda en este navegador.</p>
@@ -63,6 +70,7 @@ const sizeSelect=document.getElementById('keyboardSize'),keyboard=document.getEl
 const screenEl=document.getElementById('screen'),screenMessage=document.getElementById('screenMessage');
 const names=['DO','DO♯','RE','RE♯','MI','FA','FA♯','SOL','SOL♯','LA','LA♯','SI'],blackNotes=new Set([1,3,6,8,10]);
 let notes=[],duration=0,playing=false,pausedAt=0,startedAt=0,raf=0,lastFrame=0;
+let measureTimes=[0],practiceStartTime=0,practiceEndTime=0;
 let audioContext=null,pianoInstrument=null,audioLoading=null,audioScheduledUntil=0,scheduledAudioNotes=new Set(),audioSources=[];
 const pxPerSecond=38,lookAhead=5.8;
 function renderKeyboard(count){
@@ -142,7 +150,7 @@ function parseMidi(buffer){
  const format=read16(),trackCount=read16(),division=read16();p=8+headerLen;
  if(division&0x8000)throw Error('Este MIDI usa un formato de tiempo no compatible.');
  const ppq=division;if(!ppq)throw Error('No se puede leer la resolución temporal del MIDI.');
- const rawNotes=[],tempos=[{tick:0,tempo:500000}];
+ const rawNotes=[],tempos=[{tick:0,tempo:500000}],timeSigs=[{tick:0,numerator:4,denominator:4}];
  for(let tr=0;tr<trackCount&&p<data.length;tr++){
   if(tag()!=='MTrk')throw Error('No se encuentra una pista MIDI válida.');
   const len=read32(),end=p+len;let tick=0,running=0,trackName='';const active=new Map();
@@ -153,6 +161,7 @@ function parseMidi(buffer){
     const type=data[p++],n=readVar(end);
     if(type===3)trackName=new TextDecoder().decode(data.slice(p,p+n));
     if(type===81&&n===3){const tempo=(data[p]<<16)|(data[p+1]<<8)|data[p+2];if(tempo)tempos.push({tick,tempo})}
+    if(type===88&&n>=4){const numerator=data[p],denominator=2**data[p+1];if(numerator>0&&denominator>0)timeSigs.push({tick,numerator,denominator})}
     p+=n;if(type===47)break;continue;
    }
    if(status===240||status===247){const n=readVar(end);p+=n;continue}
@@ -166,17 +175,45 @@ function parseMidi(buffer){
  if(!rawNotes.length)throw Error('El MIDI no contiene notas que pueda leer.');
  tempos.sort((a,b)=>a.tick-b.tick);const compact=[];for(const t of tempos){if(compact.length&&compact[compact.length-1].tick===t.tick)compact[compact.length-1]=t;else compact.push(t)}
  function secondsAt(target){let sec=0,lastTick=0,tempo=500000;for(const t of compact){if(t.tick>target)break;if(t.tick>lastTick)sec+=(t.tick-lastTick)*tempo/(ppq*1000000);lastTick=t.tick;tempo=t.tempo}return sec+(target-lastTick)*tempo/(ppq*1000000)}
- return rawNotes.map(n=>{const label=n.trackName.toLowerCase(),hand=/left|izq|mano izquierda/.test(label)?'left':/right|der|mano derecha/.test(label)?'right':(n.midi<60?'left':'right');return{midi:n.midi,name:names[n.midi%12],start:secondsAt(n.startTick),end:secondsAt(n.endTick),hand}}).sort((a,b)=>a.start-b.start);
+ timeSigs.sort((a,b)=>a.tick-b.tick);const sigs=[];for(const s of timeSigs){if(sigs.length&&sigs[sigs.length-1].tick===s.tick)sigs[sigs.length-1]=s;else sigs.push(s)}
+ const maxTick=Math.max(...rawNotes.map(n=>n.endTick)),boundaries=[0];let barTick=0,sigIndex=0,numerator=4,denominator=4,guard=0;
+ while(barTick<maxTick&&guard++<10000){
+  while(sigIndex+1<sigs.length&&sigs[sigIndex+1].tick<=barTick){sigIndex++;numerator=sigs[sigIndex].numerator;denominator=sigs[sigIndex].denominator}
+  let next=barTick+ppq*4*numerator/denominator;
+  if(sigIndex+1<sigs.length&&sigs[sigIndex+1].tick<next)next=sigs[sigIndex+1].tick;
+  if(next<=barTick)break;barTick=next;boundaries.push(barTick);
+ }
+ const barSeconds=boundaries.map(secondsAt),songEnd=secondsAt(maxTick);
+ if(barSeconds[barSeconds.length-1]<songEnd-0.001)barSeconds.push(songEnd);
+ const result=rawNotes.map(n=>{const label=n.trackName.toLowerCase(),hand=/left|izq|mano izquierda/.test(label)?'left':/right|der|mano derecha/.test(label)?'right':(n.midi<60?'left':'right');return{midi:n.midi,name:names[n.midi%12],start:secondsAt(n.startTick),end:secondsAt(n.endTick),hand}}).sort((a,b)=>a.start-b.start);
+ result.measureTimes=barSeconds;return result;
 }
 
 function loadNotes(list,fileName){
- notes=list;duration=Math.max(...notes.map(n=>n.end));pausedAt=0;playing=false;cancelAnimationFrame(raf);
+ notes=list;duration=Math.max(...notes.map(n=>n.end));measureTimes=Array.isArray(list.measureTimes)&&list.measureTimes.length>1?list.measureTimes:[...Array(Math.ceil(duration/2)+1)].map((_,i)=>Math.min(i*2,duration));
+ if(measureTimes[measureTimes.length-1]<duration)measureTimes.push(duration);
+ practiceStartTime=0;practiceEndTime=duration;pausedAt=0;playing=false;cancelAnimationFrame(raf);updatePracticeControls();
  document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;document.getElementById('restart').disabled=false;
  document.getElementById('songTitle').textContent=fileName;screenMessage.textContent='Canción cargada. Pulsa Reproducir.';screenMessage.style.display='grid';
  document.getElementById('status').textContent=notes.length.toLocaleString('es-ES')+' notas cargadas · duración '+formatTime(duration);
  document.getElementById('progressBar').style.width='0%';draw(0);
 }
 function formatTime(s){const m=Math.floor(s/60),sec=Math.floor(s%60);return m+':'+String(sec).padStart(2,'0')}
+function updatePracticeControls(){
+ const start=document.getElementById('practiceStart'),end=document.getElementById('practiceEnd'),apply=document.getElementById('applyPractice');
+ const bars=Math.max(1,measureTimes.length-1);start.replaceChildren();end.replaceChildren();
+ for(let i=0;i<bars;i++){const a=document.createElement('option');a.value=i;a.textContent=String(i+1);start.append(a);const b=document.createElement('option');b.value=i;b.textContent=String(i+1);end.append(b)}
+ start.disabled=end.disabled=apply.disabled=false;start.value='0';end.value=String(Math.min(bars-1,3));
+ document.getElementById('measureInfo').textContent=bars+' compases detectados'+(notes.some(n=>n.start>=0)?' · elige el tramo':'');
+}
+function applyPractice(){
+ const a=Number(document.getElementById('practiceStart').value),b=Number(document.getElementById('practiceEnd').value);
+ if(b<a){document.getElementById('measureInfo').textContent='El compás final debe ser igual o posterior al inicial.';return}
+ practiceStartTime=measureTimes[a]??0;practiceEndTime=measureTimes[b+1]??duration;
+ if(practiceEndTime<=practiceStartTime)practiceEndTime=duration;
+ restart();pausedAt=practiceStartTime;draw(pausedAt);
+ document.getElementById('measureInfo').textContent='Practicando compases '+(a+1)+'–'+(b+1)+' · '+formatTime(practiceStartTime)+'–'+formatTime(practiceEndTime);
+}
 function selected(n){const h=document.getElementById('hand').value;return h==='both'||h===n.hand}
 function draw(t){
  screenEl.querySelectorAll('.falling-note').forEach(e=>e.remove());
@@ -211,21 +248,25 @@ async function prepareAudio(){
  try{await audioLoading;document.getElementById('audioStatus').textContent='Piano listo · sonido activado'}finally{audioLoading=null}
 }
 function stopAudio(){for(const source of audioSources){try{source.stop()}catch(e){}}audioSources=[];scheduledAudioNotes.clear();audioScheduledUntil=pausedAt}
-function frame(now){if(!playing)return;const speed=Number(document.getElementById('speed').value)/100;const t=pausedAt+(now-startedAt)/1000*speed;
- scheduleAudio(t,speed);draw(t);if(t>=duration){playing=false;pausedAt=duration;document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;screenMessage.textContent='¡Canción terminada! Puedes volver al inicio.';screenMessage.style.display='grid';return}
+function frame(now){if(!playing)return;const speed=Number(document.getElementById('speed').value)/100;if(speed<=0){pause();return}const t=pausedAt+(now-startedAt)/1000*speed;
+ scheduleAudio(t,speed);draw(t);if(t>=practiceEndTime){if(document.getElementById('practiceLoop').checked){pausedAt=practiceStartTime;startedAt=now;stopAudio();draw(pausedAt);raf=requestAnimationFrame(frame);return}playing=false;pausedAt=practiceEndTime;document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;screenMessage.textContent='¡Canción terminada! Puedes volver al inicio.';screenMessage.style.display='grid';return}
  raf=requestAnimationFrame(frame)}
-async function play(){if(!notes.length)return;if(pausedAt>=duration)pausedAt=0;
+async function play(){if(!notes.length)return;if(Number(document.getElementById('speed').value)===0){document.getElementById('status').textContent='Sube la velocidad por encima de 0 para reproducir.';return}if(pausedAt<practiceStartTime||pausedAt>=practiceEndTime)pausedAt=practiceStartTime;
  const useAudio=document.getElementById('audioEnabled').checked;
  if(useAudio){document.getElementById('audioStatus').textContent='Cargando sonido de piano...';try{await prepareAudio()}catch(err){document.getElementById('audioStatus').textContent=err.message;document.getElementById('audioEnabled').checked=false}}
  playing=true;startedAt=performance.now();audioScheduledUntil=pausedAt;scheduledAudioNotes.clear();screenMessage.style.display='none';document.getElementById('play').disabled=true;document.getElementById('pause').disabled=false;raf=requestAnimationFrame(frame)}
 function pause(){if(!playing)return;const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;playing=false;cancelAnimationFrame(raf);stopAudio();document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;draw(pausedAt);screenMessage.textContent='En pausa';screenMessage.style.display='grid'}
-function restart(){playing=false;cancelAnimationFrame(raf);stopAudio();pausedAt=0;document.getElementById('play').disabled=!notes.length;document.getElementById('pause').disabled=true;screenMessage.textContent='Preparado desde el principio. Pulsa Reproducir.';screenMessage.style.display='grid';draw(0)}
+function restart(){playing=false;cancelAnimationFrame(raf);stopAudio();pausedAt=practiceStartTime;document.getElementById('play').disabled=!notes.length;document.getElementById('pause').disabled=true;screenMessage.textContent='Preparado desde el principio. Pulsa Reproducir.';screenMessage.style.display='grid';draw(0)}
 document.getElementById('songFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(!libraryPassword)throw Error('Primero conecta la biblioteca con la contraseña.');const isMidi=/\.midi?$/i.test(file.name);const list=isMidi?parseMidi(await file.arrayBuffer()):parseCSV(await file.text());await saveToLibrary(file);loadNotes(list,file.name);document.getElementById('status').textContent=list.length.toLocaleString('es-ES')+' notas cargadas y guardadas en la biblioteca en la nube · duración '+formatTime(Math.max(...list.map(n=>n.end)));}catch(err){screenMessage.textContent=err.message;screenMessage.style.display='grid';document.getElementById('status').textContent='No se pudo cargar el archivo.'}e.target.value='';});
 document.getElementById('librarySelect').addEventListener('change',updateLibraryButtons);document.getElementById('libraryLoad').addEventListener('click',()=>loadFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryDelete').addEventListener('click',()=>deleteFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryConnect').addEventListener('click',connectLibrary);document.getElementById('libraryPassword').addEventListener('keydown',e=>{if(e.key==='Enter')connectLibrary()});document.getElementById('songFile').disabled=true;
 document.getElementById('play').addEventListener('click',play);document.getElementById('pause').addEventListener('click',pause);document.getElementById('restart').addEventListener('click',restart);
 document.getElementById('hand').addEventListener('change',()=>{if(playing){const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;startedAt=performance.now();stopAudio()}draw(pausedAt)});
 document.getElementById('audioEnabled').addEventListener('change',async e=>{if(!e.target.checked){stopAudio();document.getElementById('audioStatus').textContent='Audio desactivado'}else{document.getElementById('audioStatus').textContent='El sonido se cargará al pulsar Reproducir';if(playing){const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;startedAt=performance.now();stopAudio();try{await prepareAudio()}catch(err){document.getElementById('audioStatus').textContent=err.message}}}});
-document.getElementById('volume').addEventListener('input',e=>{document.getElementById('audioStatus').textContent='Volumen: '+e.target.value+'%' });document.getElementById('speed').addEventListener('change',()=>{if(playing){pausedAt+=(performance.now()-startedAt)/1000*(Number(document.getElementById('speed').value)/100);startedAt=performance.now()}});
+document.getElementById('volume').addEventListener('input',e=>{document.getElementById('audioStatus').textContent='Volumen: '+e.target.value+'%' });
+document.getElementById('speed').addEventListener('input',e=>{const value=Number(e.target.value);document.getElementById('speedValue').textContent=value+' %';if(value===0&&playing){pause();document.getElementById('status').textContent='Velocidad 0 % · reproducción detenida'}else if(playing){pausedAt+=(performance.now()-startedAt)/1000*(value/100);startedAt=performance.now()}});
+document.getElementById('applyPractice').addEventListener('click',applyPractice);
+document.getElementById('practiceStart').addEventListener('change',()=>{const a=Number(document.getElementById('practiceStart').value),b=document.getElementById('practiceEnd');if(Number(b.value)<a)b.value=String(a)});
+document.getElementById('practiceEnd').addEventListener('change',()=>{const a=Number(document.getElementById('practiceStart').value),b=Number(document.getElementById('practiceEnd').value);if(b<a)document.getElementById('practiceEnd').value=String(a)});
 sizeSelect.addEventListener('change',()=>{renderKeyboard(Number(sizeSelect.value));draw(pausedAt)});
 const resizeObserver=new ResizeObserver(()=>{renderKeyboard(Number(sizeSelect.value));draw(pausedAt)});resizeObserver.observe(keyboard.parentElement);
 renderKeyboard(61);
