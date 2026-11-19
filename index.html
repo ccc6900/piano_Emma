@@ -46,12 +46,14 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
 <section class="panel">
  <h2>Cargar canción y practicar</h2>
  <div class="controls">
-  <div><label>Archivo de notas CSV</label><label class="file-label">Elegir archivo CSV<input id="songFile" type="file" accept=".csv,text/csv"></label></div>
+  <div><label>Subir canción MIDI o CSV</label><label class="file-label">Elegir archivo<input id="songFile" type="file" accept=".mid,.midi,.csv,audio/midi,text/csv"></label></div>
+  <div class="control"><label for="librarySelect">Mi biblioteca</label><select id="librarySelect"><option value="">Cargando biblioteca...</option></select></div>
+  <button id="libraryLoad" type="button" disabled> Cargar canción </button><button id="libraryDelete" type="button" disabled> Borrar de biblioteca </button>
   <div class="control"><label for="hand">Qué mano practicar</label><select id="hand"><option value="both">Las dos manos</option><option value="right">Solo mano derecha</option><option value="left">Solo mano izquierda</option></select></div>
   <div class="control"><label for="speed">Velocidad</label><select id="speed"><option value="50">50 %</option><option value="75">75 %</option><option value="100" selected>100 %</option></select></div>
   <button class="primary" id="play" disabled>▶ Reproducir</button><button id="pause" disabled>Ⅱ Pausar</button><button id="restart" disabled>↺ Volver al inicio</button>
  </div>
- <p class="hint">En esta primera prueba se muestra la animación de las notas; todavía no suena el piano. El archivo debe ser CSV separado por punto y coma, con las columnas Mano, Nota MIDI, Nombre, Inicio (s) y Fin (s).</p>
+ <p class="hint">Puedes subir archivos MIDI (.mid/.midi) o CSV. Las canciones se guardan en la biblioteca de este navegador. Todavía no suena el piano.</p>
 </section>
 </main>
 <script>
@@ -88,6 +90,83 @@ function parseCSV(text){
  if(!out.length)throw Error('No he encontrado notas válidas en el archivo.');
  out.sort((a,b)=>a.start-b.start);return out;
 }
+
+let libraryDB=null;
+function openLibrary(){
+ return new Promise((resolve,reject)=>{
+  const req=indexedDB.open('PianoEmmaLibrary',1);
+  req.onupgradeneeded=()=>{const db=req.result;if(!db.objectStoreNames.contains('songs'))db.createObjectStore('songs',{keyPath:'id'})};
+  req.onsuccess=()=>{libraryDB=req.result;resolve(libraryDB)};
+  req.onerror=()=>reject(req.error);
+ });
+}
+function storeRequest(mode,action){
+ return new Promise((resolve,reject)=>{
+  const tx=libraryDB.transaction('songs',mode),store=tx.objectStore('songs');
+  const req=action(store);req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(req.error);
+ });
+}
+async function saveToLibrary(name,list){
+ const id=String(Date.now())+'-'+Math.random().toString(36).slice(2,8);
+ await storeRequest('readwrite',s=>s.put({id,name,notes:list,added:new Date().toISOString()}));
+ await refreshLibrary();document.getElementById('librarySelect').value=id;return id;
+}
+async function refreshLibrary(){
+ const songs=await storeRequest('readonly',s=>s.getAll()),sel=document.getElementById('librarySelect');
+ sel.replaceChildren();const first=document.createElement('option');first.value='';first.textContent=songs.length?'Elige una canción guardada':'La biblioteca está vacía';sel.append(first);
+ songs.sort((a,b)=>b.added.localeCompare(a.added)).forEach(song=>{const o=document.createElement('option');o.value=song.id;o.textContent=song.name;sel.append(o)});
+ updateLibraryButtons();
+}
+function updateLibraryButtons(){const has=!!document.getElementById('librarySelect').value;document.getElementById('libraryLoad').disabled=!has;document.getElementById('libraryDelete').disabled=!has}
+async function loadFromLibrary(){
+ const id=document.getElementById('librarySelect').value;if(!id)return;
+ const song=await storeRequest('readonly',s=>s.get(id));if(song)loadNotes(song.notes,song.name);
+}
+async function deleteFromLibrary(){
+ const id=document.getElementById('librarySelect').value;if(!id)return;
+ const song=await storeRequest('readonly',s=>s.get(id));if(!song)return;
+ if(!confirm('¿Quieres borrar "'+song.name+'" de tu biblioteca?'))return;
+ await storeRequest('readwrite',s=>s.delete(id));await refreshLibrary();
+ document.getElementById('status').textContent='Canción borrada de la biblioteca.';
+}
+function parseMidi(buffer){
+ const data=new Uint8Array(buffer);let p=0;
+ const read32=()=>{const v=((data[p]*0x1000000)+(data[p+1]<<16)+(data[p+2]<<8)+data[p+3])>>>0;p+=4;return v};
+ const read16=()=>{const v=(data[p]<<8)|data[p+1];p+=2;return v};
+ const readVar=(end)=>{let v=0,b;do{if(p>=end)throw Error('Archivo MIDI incompleto.');b=data[p++];v=(v<<7)|(b&127)}while(b&128);return v};
+ const tag=()=>String.fromCharCode(data[p++],data[p++],data[p++],data[p++]);
+ if(tag()!=='MThd')throw Error('El archivo no parece ser un MIDI válido.');
+ const headerLen=read32();if(headerLen<6)throw Error('Cabecera MIDI no válida.');
+ const format=read16(),trackCount=read16(),division=read16();p=8+headerLen;
+ if(division&0x8000)throw Error('Este MIDI usa un formato de tiempo no compatible.');
+ const ppq=division;if(!ppq)throw Error('No se puede leer la resolución temporal del MIDI.');
+ const rawNotes=[],tempos=[{tick:0,tempo:500000}];
+ for(let tr=0;tr<trackCount&&p<data.length;tr++){
+  if(tag()!=='MTrk')throw Error('No se encuentra una pista MIDI válida.');
+  const len=read32(),end=p+len;let tick=0,running=0,trackName='';const active=new Map();
+  while(p<end){
+   tick+=readVar(end);let status=data[p];
+   if(status&128){p++;if(status<240)running=status}else{if(!running)throw Error('Evento MIDI no válido.');status=running}
+   if(status===255){
+    const type=data[p++],n=readVar(end);
+    if(type===3)trackName=new TextDecoder().decode(data.slice(p,p+n));
+    if(type===81&&n===3){const tempo=(data[p]<<16)|(data[p+1]<<8)|data[p+2];if(tempo)tempos.push({tick,tempo})}
+    p+=n;if(type===47)break;continue;
+   }
+   if(status===240||status===247){const n=readVar(end);p+=n;continue}
+   const kind=status>>4,channel=status&15,a=data[p++],b=(kind===12||kind===13)?0:data[p++];
+   if(channel===9)continue;
+   if(kind===9&&b>0){const q=active.get(a)||[];q.push(tick);active.set(a,q)}
+   else if(kind===8||(kind===9&&b===0)){const q=active.get(a);if(q&&q.length){const start=q.shift();rawNotes.push({track:tr,trackName,midi:a,startTick:start,endTick:Math.max(start+1,tick)})}}
+  }
+  p=end;
+ }
+ if(!rawNotes.length)throw Error('El MIDI no contiene notas que pueda leer.');
+ tempos.sort((a,b)=>a.tick-b.tick);const compact=[];for(const t of tempos){if(compact.length&&compact[compact.length-1].tick===t.tick)compact[compact.length-1]=t;else compact.push(t)}
+ function secondsAt(target){let sec=0,lastTick=0,tempo=500000;for(const t of compact){if(t.tick>target)break;if(t.tick>lastTick)sec+=(t.tick-lastTick)*tempo/(ppq*1000000);lastTick=t.tick;tempo=t.tempo}return sec+(target-lastTick)*tempo/(ppq*1000000)}
+ return rawNotes.map(n=>{const label=n.trackName.toLowerCase(),hand=/left|izq|mano izquierda/.test(label)?'left':/right|der|mano derecha/.test(label)?'right':(n.midi<60?'left':'right');return{midi:n.midi,name:names[n.midi%12],start:secondsAt(n.startTick),end:secondsAt(n.endTick),hand}}).sort((a,b)=>a.start-b.start);
+}
+
 function loadNotes(list,fileName){
  notes=list;duration=Math.max(...notes.map(n=>n.end));pausedAt=0;playing=false;cancelAnimationFrame(raf);
  document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;document.getElementById('restart').disabled=false;
@@ -120,11 +199,13 @@ function frame(now){if(!playing)return;const speed=Number(document.getElementByI
 function play(){if(!notes.length)return;if(pausedAt>=duration)pausedAt=0;playing=true;startedAt=performance.now();screenMessage.style.display='none';document.getElementById('play').disabled=true;document.getElementById('pause').disabled=false;raf=requestAnimationFrame(frame)}
 function pause(){if(!playing)return;const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;playing=false;cancelAnimationFrame(raf);document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;draw(pausedAt);screenMessage.textContent='En pausa';screenMessage.style.display='grid'}
 function restart(){playing=false;cancelAnimationFrame(raf);pausedAt=0;document.getElementById('play').disabled=!notes.length;document.getElementById('pause').disabled=true;screenMessage.textContent='Preparado desde el principio. Pulsa Reproducir.';screenMessage.style.display='grid';draw(0)}
-document.getElementById('songFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{loadNotes(parseCSV(await file.text()),file.name)}catch(err){screenMessage.textContent=err.message;screenMessage.style.display='grid';document.getElementById('status').textContent='No se pudo cargar el archivo.'}});
+document.getElementById('songFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{const isMidi=/\\.midi?$/i.test(file.name);const list=isMidi?parseMidi(await file.arrayBuffer()):parseCSV(await file.text());await saveToLibrary(file.name,list);loadNotes(list,file.name);document.getElementById('status').textContent= list.length.toLocaleString('es-ES')+' notas cargadas y guardadas en tu biblioteca · duración '+formatTime(Math.max(...list.map(n=>n.end)));}catch(err){screenMessage.textContent=err.message;screenMessage.style.display='grid';document.getElementById('status').textContent='No se pudo cargar el archivo.'}e.target.value='';});
+document.getElementById('librarySelect').addEventListener('change',updateLibraryButtons);document.getElementById('libraryLoad').addEventListener('click',loadFromLibrary);document.getElementById('libraryDelete').addEventListener('click',deleteFromLibrary);
 document.getElementById('play').addEventListener('click',play);document.getElementById('pause').addEventListener('click',pause);document.getElementById('restart').addEventListener('click',restart);
 document.getElementById('hand').addEventListener('change',()=>draw(pausedAt));document.getElementById('speed').addEventListener('change',()=>{if(playing){pausedAt+=(performance.now()-startedAt)/1000*(Number(document.getElementById('speed').value)/100);startedAt=performance.now()}});
 sizeSelect.addEventListener('change',()=>{renderKeyboard(Number(sizeSelect.value));draw(pausedAt)});
 const resizeObserver=new ResizeObserver(()=>{renderKeyboard(Number(sizeSelect.value));draw(pausedAt)});resizeObserver.observe(keyboard.parentElement);
 renderKeyboard(61);
+openLibrary().then(refreshLibrary).catch(()=>{document.getElementById('librarySelect').innerHTML='<option value="">No se pudo abrir la biblioteca</option>';document.getElementById('status').textContent='El navegador no permite guardar la biblioteca.'});
 </script>
 </body></html>
