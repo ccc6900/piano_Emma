@@ -226,8 +226,22 @@ function parseMidi(buffer){
 }
 
 function simplifyRightHand(source){
- // En MIDI multipista, primero buscamos las pistas melódicas de registro medio.
- // Así evitamos mezclar bajos y percusiones afinadas con la melodía principal.
+ // Bella Ciao: la melodía está repartida entre dos pistas consecutivas.
+ // Pista 1 (Acoustic Gtr) contiene el primer tramo y pista 2 (Elec. Piano)
+ // continúa la melodía. Las pistas 5 y 7 son duplicados una octava arriba;
+ // las pistas restantes son acompañamientos. No mezclarlas.
+ const trackNames=new Map(source.filter(n=>Number.isInteger(n.track)).map(n=>[n.track,n.trackName||'']));
+ const bellaCiaoTracks=[...trackNames.entries()].some(([id,name])=>id===0&&/Acoustic Gtr/i.test(name))
+  &&[...trackNames.entries()].some(([id,name])=>id===1&&/Elec\. Piano/i.test(name));
+ if(bellaCiaoTracks){
+  const melody=source.filter(n=>n.track===0||n.track===1).slice().sort((a,b)=>a.start-b.start||a.midi-b.midi);
+  for(let i=0;i<melody.length-1;i++){
+   const next=melody[i+1];
+   if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
+  }
+  return melody.filter(n=>n.end>n.start);
+ }
+ // Para los demás MIDI se conserva el método general.
  const hasTracks=source.some(n=>Number.isInteger(n.track));
  let pool=source.filter(n=>n.hand==='right');
  if(hasTracks){
