@@ -27,10 +27,10 @@
     .screen:after{content:"";position:absolute;left:0;right:0;bottom:0;height:3px;background:#d8e6ff;box-shadow:0 0 14px #62a7ff}
     .screen-message{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:20px;color:var(--muted)}
     .piano-wrap{overflow-x:auto;padding:12px 2px 8px}
-    .keyboard{height:170px;display:flex;position:relative;min-width:max-content;user-select:none}
+    .keyboard{height:170px;position:relative;min-width:max-content;user-select:none}
     .key{position:relative;border:1px solid #aab3c2;border-radius:0 0 5px 5px}
-    .white{width:38px;height:170px;background:linear-gradient(90deg,#fff,#e8edf5);z-index:1}
-    .black{width:24px;height:105px;background:linear-gradient(90deg,#111827,#303b50);margin-left:-12px;margin-right:-12px;z-index:2;border:1px solid #050914;border-radius:0 0 4px 4px}
+    .white{position:absolute;top:0;width:38px;height:170px;background:linear-gradient(90deg,#fff,#e8edf5);z-index:1}
+    .black{position:absolute;top:0;width:24px;height:105px;background:linear-gradient(90deg,#111827,#303b50);z-index:2;border:1px solid #050914;border-radius:0 0 4px 4px}
     .key .note{position:absolute;bottom:8px;left:0;right:0;text-align:center;font-size:10px;color:#364152}
     .key.black .note{color:#e9effb;bottom:6px;font-size:9px}
     .key.c-key{background:linear-gradient(90deg,#e7f2ff,#cfe3ff)}
@@ -39,7 +39,7 @@
     .dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:7px;vertical-align:middle}
     .left{background:var(--pink)}.right{background:var(--blue)}
     .hint{color:var(--muted);font-size:14px;line-height:1.55}
-    @media(max-width:600px){.panel{padding:15px}.screen{height:170px}.white{width:32px}.black{width:20px;margin-left:-10px;margin-right:-10px}.keyboard{height:145px}.white{height:145px}.black{height:90px}}
+    @media(max-width:600px){.panel{padding:15px}.screen{height:170px}.white{width:32px}.black{width:20px}.keyboard{height:145px}.white{height:145px}.black{height:90px}}
   </style>
 </head>
 <body>
@@ -81,17 +81,26 @@
     function renderKeyboard(count){
       keyboard.replaceChildren();
       const start=count===61?36:21;
-      for(let n=0;n<count;n++){
-        const midi=start+n, pitch=midi%12, octave=Math.floor(midi/12)-1;
+      let whiteIndex=0;
+      const whiteWidth=window.matchMedia('(max-width:600px)').matches?32:38;
+      for(let midi=start;midi<start+count;midi++){
+        const pitch=midi%12, octave=Math.floor(midi/12)-1;
+        const isBlack=blackNotes.has(pitch);
         const key=document.createElement('div');
-        key.className='key '+(blackNotes.has(pitch)?'black':'white')+(pitch===0?' c-key':'');
+        key.className='key '+(isBlack?'black':'white')+(pitch===0?' c-key':'');
         key.setAttribute('aria-label',names[pitch]+' '+octave);
-        if(pitch===0 || (!blackNotes.has(pitch) && n===count-1)){
-          const note=document.createElement('span');note.className='note';
-          note.textContent=names[pitch]+' '+octave;key.append(note);
+        if(isBlack){ key.style.left=(whiteIndex*whiteWidth-whiteWidth/2)+'px'; }
+        else {
+          key.style.left=(whiteIndex*whiteWidth)+'px';
+          if(pitch===0 || midi===start+count-1){
+            const note=document.createElement('span');note.className='note';
+            note.textContent=names[pitch]+' '+octave;key.append(note);
+          }
+          whiteIndex++;
         }
         keyboard.append(key);
       }
+      keyboard.style.width=(whiteIndex*whiteWidth)+'px';
       rangeText.textContent=count+' teclas · '+(count===61?'DO2 a DO7':'LA0 a DO8');
     }
     sizeSelect.addEventListener('change',()=>renderKeyboard(Number(sizeSelect.value)));
