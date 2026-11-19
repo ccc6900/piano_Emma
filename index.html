@@ -25,7 +25,7 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
 .key.active.left{background:linear-gradient(180deg,#ffd0e4,#ec69a5)!important;box-shadow:inset 0 0 0 3px #ff83b5,0 0 18px 7px #f45a9e;z-index:3}
 .key.active{filter:brightness(1.2)}
 .legend{display:flex;gap:18px;flex-wrap:wrap;color:var(--muted);font-size:14px;margin-top:12px}.dot{display:inline-block;width:11px;height:11px;border-radius:3px;margin-right:7px;vertical-align:middle}.left{background:var(--pink)}.right{background:var(--blue)}
-.hint{font-size:14px;line-height:1.55}.status{margin-top:12px;color:#c7d6ed;font-size:14px}.progress{height:7px;background:#27344c;border-radius:8px;overflow:hidden;margin-top:8px}.progress>div{height:100%;width:0;background:#62a7ff;transition:width .1s}
+.hint{font-size:14px;line-height:1.55}.status{margin-top:12px;color:#c7d6ed;font-size:14px}.progress{margin-top:8px}.progress input{display:block;width:100%;height:22px;margin:0;accent-color:#62a7ff;cursor:pointer}.progress input:disabled{opacity:.45;cursor:not-allowed}
 @media(max-width:600px){.panel{padding:10px}.screen{height:clamp(300px,42vh,460px)}.keyboard{height:135px}.white{height:135px}.black{height:84px}.key .note{display:block}}
 </style>
 </head>
@@ -41,7 +41,7 @@ select{min-width:150px}button,.file-label{cursor:pointer;font-weight:600}button.
  <div class="screen" id="screen"><div class="screen-message" id="screenMessage">Carga el archivo CSV de Viva la Vida para ver las notas en movimiento.</div></div>
  <div class="piano-wrap"><div id="keyboard" class="keyboard" aria-label="Teclado de piano"></div></div>
  <div class="legend"><span><i class="dot right"></i>Mano derecha</span><span><i class="dot left"></i>Mano izquierda</span></div>
- <div class="status" id="status">Esperando una canción.</div><div class="progress"><div id="progressBar"></div></div>
+ <div class="status" id="status">Esperando una canción.</div><div class="progress"><input id="seekBar" type="range" min="0" max="0" step="0.01" value="0" aria-label="Posición de la canción" disabled></div>
 </section>
 <section class="panel">
  <h2>Cargar canción y practicar</h2>
@@ -311,7 +311,7 @@ function loadNotes(list,fileName){
  document.getElementById('play').disabled=false;document.getElementById('pause').disabled=true;document.getElementById('restart').disabled=false;
  document.getElementById('songTitle').textContent=fileName;screenMessage.textContent='Canción cargada. Pulsa Reproducir.';screenMessage.style.display='grid';
  document.getElementById('status').textContent=notes.length.toLocaleString('es-ES')+' notas cargadas · duración '+formatTime(duration);
- document.getElementById('progressBar').style.width='0%';draw(0);
+ document.getElementById('seekBar').value='0';draw(0);
 }
 function formatTime(s){const m=Math.floor(s/60),sec=Math.floor(s%60);return m+':'+String(sec).padStart(2,'0')}
 function updatePracticeControls(){
@@ -319,6 +319,7 @@ function updatePracticeControls(){
  const bars=Math.max(1,measureTimes.length-1);start.replaceChildren();end.replaceChildren();
  for(let i=0;i<bars;i++){const a=document.createElement('option');a.value=i;a.textContent=String(i+1);start.append(a);const b=document.createElement('option');b.value=i;b.textContent=String(i+1);end.append(b)}
  start.disabled=end.disabled=apply.disabled=false;start.value='0';end.value=String(Math.min(bars-1,3));
+ const seek=document.getElementById('seekBar');seek.min=String(practiceStartTime);seek.max=String(Math.max(practiceStartTime+0.01,practiceEndTime));seek.disabled=!notes.length;
  document.getElementById('measureInfo').textContent=bars+' compases detectados'+(notes.some(n=>n.start>=0)?' · elige el tramo':'');
 }
 function applyPractice(){
@@ -345,7 +346,7 @@ function draw(t){
   screenEl.append(el);
  }
  document.getElementById('status').textContent=formatTime(t)+' / '+formatTime(duration)+' · '+notes.filter(n=>selected(n)&&n.start<=t&&n.end>=t).length+' notas sonando';
- document.getElementById('progressBar').style.width=(duration?t/duration*100:0)+'%';
+ const seek=document.getElementById('seekBar');if(seek&&!seek.matches(':active'))seek.value=String(Math.max(Number(seek.min)||0,Math.min(Number(seek.max)||duration,t)));
 }
 function scheduleAudio(t,speed){
  if(!pianoInstrument||!document.getElementById('audioEnabled').checked)return;
@@ -375,6 +376,11 @@ function restart(){playing=false;cancelAnimationFrame(raf);stopAudio();pausedAt=
 document.getElementById('songFile').addEventListener('change',async e=>{const file=e.target.files[0];if(!file)return;try{if(!libraryPassword)throw Error('Primero conecta la biblioteca con la contraseña.');const isMidi=/\.(?:mid|midi|kar)$/i.test(file.name);const list=isMidi?parseMidi(await file.arrayBuffer()):parseCSV(await file.text());await saveToLibrary(file);loadNotes(list,file.name);document.getElementById('status').textContent=list.length.toLocaleString('es-ES')+' notas cargadas y guardadas en la biblioteca en la nube · duración '+formatTime(Math.max(...list.map(n=>n.end)));}catch(err){screenMessage.textContent=err.message;screenMessage.style.display='grid';document.getElementById('status').textContent='No se pudo cargar el archivo.'}e.target.value='';});
 document.getElementById('librarySelect').addEventListener('change',updateLibraryButtons);document.getElementById('analyzeMidi').addEventListener('click',()=>analyzeSelectedMidi().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('copyMidiReport').addEventListener('click',async()=>{const box=document.getElementById('midiReport');try{await navigator.clipboard.writeText(box.value);document.getElementById('libraryHint').textContent='Informe copiado. Pégalo en el chat.'}catch(e){box.focus();box.select();document.execCommand('copy');document.getElementById('libraryHint').textContent='Informe seleccionado/copiar. Si no se copió, pulsa Ctrl+C.'}});document.getElementById('closeMidiReport').addEventListener('click',()=>{document.getElementById('midiReportPanel').style.display='none';document.getElementById('copyMidiReport').style.display='none';document.getElementById('closeMidiReport').style.display='none';document.getElementById('midiReport').value='';document.getElementById('copyMidiReport').disabled=true;});document.getElementById('libraryLoad').addEventListener('click',()=>loadFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryDelete').addEventListener('click',()=>deleteFromLibrary().catch(e=>document.getElementById('libraryHint').textContent=e.message));document.getElementById('libraryConnect').addEventListener('click',connectLibrary);document.getElementById('libraryPassword').addEventListener('keydown',e=>{if(e.key==='Enter')connectLibrary()});document.getElementById('rememberPassword').addEventListener('change',e=>{if(!e.target.checked)localStorage.removeItem(PASSWORD_STORAGE_KEY);else if(libraryPassword)localStorage.setItem(PASSWORD_STORAGE_KEY,libraryPassword)});document.getElementById('songFile').disabled=true;
 document.getElementById('play').addEventListener('click',play);document.getElementById('pause').addEventListener('click',pause);document.getElementById('restart').addEventListener('click',restart);
+ let seekWasPlaying=false;const seekBar=document.getElementById('seekBar');
+ function beginSeek(){seekWasPlaying=playing;if(playing)pause()}
+ seekBar.addEventListener('pointerdown',beginSeek);seekBar.addEventListener('keydown',beginSeek);
+ seekBar.addEventListener('input',()=>{if(!notes.length)return;pausedAt=Math.max(practiceStartTime,Math.min(practiceEndTime,Number(seekBar.value)));stopAudio();draw(pausedAt);screenMessage.style.display='none';});
+ seekBar.addEventListener('change',()=>{if(seekWasPlaying){seekWasPlaying=false;play()}else{document.getElementById('status').textContent=formatTime(pausedAt)+' / '+formatTime(duration)+' · en pausa';}});
 document.getElementById('hand').addEventListener('change',()=>{if(playing){pausedAt+=(performance.now()-startedAt)/1000*playbackSpeed;startedAt=performance.now();stopAudio()}draw(pausedAt)});
 document.getElementById('audioEnabled').addEventListener('change',async e=>{if(!e.target.checked){stopAudio();document.getElementById('audioStatus').textContent='Audio desactivado'}else{document.getElementById('audioStatus').textContent='El sonido se cargará al pulsar Reproducir';if(playing){const speed=Number(document.getElementById('speed').value)/100;pausedAt+=(performance.now()-startedAt)/1000*speed;startedAt=performance.now();stopAudio();try{await prepareAudio()}catch(err){document.getElementById('audioStatus').textContent=err.message}}}});
 document.getElementById('volume').addEventListener('input',e=>{document.getElementById('audioStatus').textContent='Volumen: '+e.target.value+'%' });
