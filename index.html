@@ -331,6 +331,15 @@ function applyPractice(){
  restart();pausedAt=practiceStartTime;draw(pausedAt);
  document.getElementById('measureInfo').textContent='Practicando compases '+(a+1)+'–'+(b+1)+' · '+formatTime(practiceStartTime)+'–'+formatTime(practiceEndTime);
 }
+document.getElementById('seekBar').addEventListener('input',e=>{
+ const seek=e.currentTarget;
+ if(playing)pause();
+ const min=Number(seek.min)||0,max=Number(seek.max)||duration;
+ pausedAt=Math.max(min,Math.min(max,Number(seek.value)||0));
+ stopAudio();
+ screenMessage.style.display='none';
+ draw(pausedAt);
+});
 function selected(n){const h=document.getElementById('hand').value;return h==='both'||h===n.hand}
 function draw(t){
  screenEl.querySelectorAll('.falling-note').forEach(e=>e.remove());
