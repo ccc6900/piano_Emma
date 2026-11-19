@@ -327,6 +327,7 @@ function applyPractice(){
  if(b<a){document.getElementById('measureInfo').textContent='El compás final debe ser igual o posterior al inicial.';return}
  practiceStartTime=measureTimes[a]??0;practiceEndTime=measureTimes[b+1]??duration;
  if(practiceEndTime<=practiceStartTime)practiceEndTime=duration;
+ const seek=document.getElementById('seekBar');seek.min=String(practiceStartTime);seek.max=String(Math.max(practiceStartTime+0.01,practiceEndTime));seek.value=String(practiceStartTime);
  restart();pausedAt=practiceStartTime;draw(pausedAt);
  document.getElementById('measureInfo').textContent='Practicando compases '+(a+1)+'–'+(b+1)+' · '+formatTime(practiceStartTime)+'–'+formatTime(practiceEndTime);
 }
