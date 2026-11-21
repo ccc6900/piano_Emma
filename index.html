@@ -229,6 +229,28 @@ function parseMidi(buffer){
 }
 
 function simplifyRightHand(source){
+ // Adele - Someone Like You: este MIDI de una sola pista mezcla el
+ // arpegio de acompañamiento con la línea superior. Para el modo sencillo
+ // aislamos primero las notas del registro agudo y las dejamos en mano derecha.
+ const adeleTrack=source.length>=1600&&source.length<=1710
+  &&source.some(n=>/Elec\\. Piano \\(Classic\\)/i.test(n.trackName||''))
+  &&Math.min(...source.map(n=>n.midi))>=49
+  &&Math.max(...source.map(n=>n.midi))<=89;
+ if(adeleTrack){
+  const lead=source.filter(n=>n.midi>=77).slice().sort((a,b)=>a.start-b.start||b.midi-a.midi);
+  const groups=[];
+  for(const n of lead){
+   let g=groups[groups.length-1];
+   if(!g||n.start-g.firstStart>0.10){g={firstStart:n.start,items:[]};groups.push(g)}
+   g.items.push(n);
+  }
+  const melody=groups.map(g=>g.items.reduce((best,n)=>n.midi>best.midi?n:best,g.items[0])).sort((a,b)=>a.start-b.start);
+  for(let i=0;i<melody.length-1;i++){
+   const next=melody[i+1];
+   if(melody[i].end>next.start)melody[i]={...melody[i],end:Math.max(melody[i].start+0.06,next.start)};
+  }
+  return melody.filter(n=>n.end>n.start).map(n=>({...n,hand:'right'}));
+ }
  // Mana - Rayando el Sol (MIDIfind): usar solo Guitarra 1 y Guitarra 2.
  // Se excluyen el acompañamiento, el bajo, el solo de acordes y las cuerdas.
  const rayandoFindTracks=new Map();
